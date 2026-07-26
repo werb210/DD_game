@@ -820,6 +820,16 @@ function displayNameForKey(key) {
   return key;
 }
 
+function buildAnthropicHeaders() {
+  const headers = { "Content-Type": "application/json" };
+  if (typeof window !== "undefined" && window.__ANTHROPIC_API_KEY__) {
+    headers["x-api-key"] = window.__ANTHROPIC_API_KEY__;
+    headers["anthropic-version"] = "2023-06-01";
+    headers["anthropic-dangerous-direct-browser-access"] = "true";
+  }
+  return headers;
+}
+
 async function callModel(systemPrompt, userMessage, maxTokens = 1200, attempt = 1, priorMessages = null, onDebug = null) {
   const messages = priorMessages || [{ role: "user", content: userMessage }];
 
@@ -832,7 +842,7 @@ async function callModel(systemPrompt, userMessage, maxTokens = 1200, attempt = 
   try {
     response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: buildAnthropicHeaders(),
       body: JSON.stringify({
         model: "claude-sonnet-4-6",
         max_tokens: maxTokens,
@@ -919,7 +929,7 @@ async function callModel(systemPrompt, userMessage, maxTokens = 1200, attempt = 
 async function pingAPI() {
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: buildAnthropicHeaders(),
     body: JSON.stringify({
       model: "claude-sonnet-4-6",
       max_tokens: 50,
@@ -937,7 +947,7 @@ async function pingWithSystemPrompt() {
   try {
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: buildAnthropicHeaders(),
       body: JSON.stringify({
         model: "claude-sonnet-4-6",
         max_tokens: 1200,
