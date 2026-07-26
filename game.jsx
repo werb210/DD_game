@@ -79,6 +79,11 @@ const NPC_INTERACTION_TABLE = {
   smallSlight: { respect: -1 },
 };
 
+const NPC_TRAITS = [
+  "Honest", "Greedy", "Cowardly", "Brave", "Loyal", "Curious",
+  "Stubborn", "Suspicious", "Kind", "Ambitious", "Superstitious", "Vengeful",
+];
+
 // Fixed vocabulary of consumable effects. Claude may tag a "loot" event with one of these
 // kinds when the item is a usable curative — the actual heal amount lives here in code,
 // never in Claude's narration. Items with no kind (or an unrecognized one) are just flavor/
@@ -563,8 +568,8 @@ Respond with ONLY valid JSON, no markdown fences, no preamble:
   "narration": "string",
   "stateUpdates": {
     "location": null,
-    "newNPCs": [{"name": "string", "memory": "short fact"}],
-    "npcUpdates": [{"id": "string — exact existing npc id from WORLD STATE", "memory": "updated fact"}],
+    "newNPCs": [{"name": "string", "memory": "short fact", "traits": "array of 1-3 strings from the fixed trait list below, optional", "goal": "short string, what this NPC wants, optional", "secret": "short string, something hidden about them, optional"}],
+    "npcUpdates": [{"id": "string — exact existing npc id from WORLD STATE", "memory": "updated fact, optional", "traits": "array of 1-3 strings from the fixed trait list, optional — only include if it should change", "goal": "short string, optional — only include if it changes", "secret": "short string, optional — only include if newly revealed or changed"}],
     "reputationDelta": "string or null",
     "worldFacts": ["short new persistent facts, if any"]
   },
@@ -598,6 +603,8 @@ Likewise, set "equipmentKey" ONLY when the item is a wearable weapon or armor pi
 Every item you loot is automatically assigned a rarity by code (Common through Mythic) using fixed drop odds — you have no input into this and never see or set it. Narrate loot however the scene calls for; don't try to hedge your description toward a "safe" rarity, since the actual tier is decided independently and reported separately in the game's own log line.
 
 For npc_relationship: use this liberally for small, easy-to-miss moments, not just dramatic ones — a passing kindness or a minor slight is exactly as valid as betrayal or heroics. Never invent an interaction label outside the fixed list above; if nothing fits, omit the event.
+
+For "traits", "goal", and "secret" on newNPCs/npcUpdates: these are optional and meant for NPCs who actually matter to the current scene or an active thread — not every passing name needs a full profile. "traits" must be 1-3 entries from this exact fixed list: Honest, Greedy, Cowardly, Brave, Loyal, Curious, Stubborn, Suspicious, Kind, Ambitious, Superstitious, Vengeful — never invent a trait outside this list. "goal" and "secret" are free text, kept to a single short sentence. A "secret" being stored here does NOT mean the player knows it — it's private narrative memory for you to reference consistently and reveal in-fiction only if and when the story actually earns that reveal; never have an NPC blurt out their own secret unprompted just because it exists in this field. Only include a field in npcUpdates when it's actually changing — omit memory/traits/goal/secret entirely rather than repeating unchanged values.
 
 For "shop_open": use this whenever the player's action would plausibly put them in front of a merchant to browse or trade — approaching a shopkeeper, stepping into a store, asking a trader what they have. The NPC being shopped with MUST already exist (introduce them via newNPCs first if they're new, then use their id — never open a shop on the same turn you introduce the NPC, since their id isn't assigned until after this turn resolves; narrate the approach that turn and let the player's next action open the shop). Pick "merchantType" based on what kind of trader the fiction calls for: "general_store" for a village shop selling odds and ends, "blacksmith" for weapons/armor, "apothecary" for potions/herbs/curatives, "fence" for a black-market or disreputable buyer/seller who deals in stolen or rare goods, usually found in shadier settings. Code handles the actual stock and prices — never narrate specific prices or invent items in the shop yourself. If an NPC's fear value in WORLD STATE is very high (7+), code will silently refuse to open their shop — so don't narrate a hostile, frightened NPC warmly welcoming the player to trade; narrate the refusal or distrust instead. Likewise, an NPC with high trust (5+) genuinely does give the player better prices and one with very low/negative trust gives worse ones — feel free to reflect that in narration (a warm discount, a suspicious markup) since it's already true in the numbers.
 
@@ -1828,15 +1835,30 @@ export default function DMMemoryTest() {
         }
 
         (stateUpdates.newNPCs || []).forEach((npc) => {
-          // Defense in depth: if Claude re-introduces an existing name via newNPCs instead
-          // of npcUpdates, merge rather than duplicate. The real fix is the id-based path
-          // below, used by every future turn once this NPC has an id.
+          const validTraits = Array.isArray(npc.traits) ? npc.traits.filter((t) => NPC_TRAITS.includes(t)) : [];
           const existingByName = next.npcs.findIndex((n) => n.name === npc.name);
           if (existingByName >= 0) {
-            next.npcs[existingByName] = { ...next.npcs[existingByName], memory: npc.memory };
+            next.npcs[existingByName] = {
+              ...next.npcs[existingByName],
+              memory: npc.memory,
+              ...(validTraits.length ? { traits: validTraits } : {}),
+              ...(npc.goal ? { goal: npc.goal } : {}),
+              ...(npc.secret ? { secret: npc.secret } : {}),
+            };
           } else {
             const newId = `npc_${nextNpcIdRef.current++}`;
-            next.npcs.push({ id: newId, name: npc.name, memory: npc.memory, trust: 0, respect: 0, fear: 0 });
+            next.npcs.push({
+              id: newId,
+              name: npc.name,
+              memory: npc.memory,
+              trust: 0,
+              respect: 0,
+              fear: 0,
+              traits: validTraits,
+              goal: npc.goal || null,
+              secret: npc.secret || null,
+              personalFear: null,
+            });
           }
         });
 
@@ -1846,7 +1868,14 @@ export default function DMMemoryTest() {
             pushSystemLine(`⚠ npcUpdates referenced id "${update.id}" which doesn't exist — skipped.`);
             return;
           }
-          next.npcs[idx] = { ...next.npcs[idx], memory: update.memory };
+          const validTraits = Array.isArray(update.traits) ? update.traits.filter((t) => NPC_TRAITS.includes(t)) : null;
+          next.npcs[idx] = {
+            ...next.npcs[idx],
+            ...(update.memory ? { memory: update.memory } : {}),
+            ...(validTraits && validTraits.length ? { traits: validTraits } : {}),
+            ...(update.goal ? { goal: update.goal } : {}),
+            ...(update.secret ? { secret: update.secret } : {}),
+          };
         });
 
         return next;
@@ -2484,6 +2513,15 @@ export default function DMMemoryTest() {
                     </span>
                   )}
                 </div>
+                {n.traits?.length > 0 && (
+                  <div style={{ color: CODE_VOICE, paddingLeft: "8px", fontSize: "11px", marginTop: "2px" }}>{n.traits.join(" · ")}</div>
+                )}
+                {n.goal && (
+                  <div style={{ color: SLATE, paddingLeft: "8px", fontSize: "11px", marginTop: "2px", fontStyle: "italic" }}>Wants: {n.goal}</div>
+                )}
+                {n.secret && (
+                  <div style={{ color: WOUND, paddingLeft: "8px", fontSize: "11px", marginTop: "2px", fontStyle: "italic" }}>Secret: {n.secret}</div>
+                )}
               </div>
             ))
           )}
@@ -3011,6 +3049,15 @@ function JournalPanel({ character, worldState, quests, onClose }) {
                     {n.merchant && <span style={{ color: CODE_VOICE, fontSize: "10.5px", marginLeft: "6px" }}>{MERCHANT_TYPES[n.merchant.merchantType].label}</span>}
                   </div>
                   <div style={{ color: SLATE, fontSize: "11.5px", marginTop: "2px" }}>{n.memory}</div>
+                  {n.traits?.length > 0 && (
+                    <div style={{ color: CODE_VOICE, fontSize: "10.5px", marginTop: "2px" }}>{n.traits.join(" · ")}</div>
+                  )}
+                  {n.goal && (
+                    <div style={{ color: SLATE, fontSize: "11.5px", marginTop: "2px", fontStyle: "italic" }}>Wants: {n.goal}</div>
+                  )}
+                  {n.secret && (
+                    <div style={{ color: WOUND, fontSize: "11.5px", marginTop: "2px", fontStyle: "italic" }}>Secret: {n.secret}</div>
+                  )}
                 </div>
               );
             })
