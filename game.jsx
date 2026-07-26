@@ -1246,7 +1246,7 @@ export default function DMMemoryTest() {
   // saveChecked prevents the brief default-state render (before a real save loads)
   // from overwriting that real save with blank data.
   useEffect(() => {
-    if (!saveChecked) return;
+    if (!saveChecked || needsIdentity) return;
     (async () => {
       try {
         const payload = buildSavePayload();
@@ -1256,7 +1256,7 @@ export default function DMMemoryTest() {
         // Best-effort — a failed save write shouldn't interrupt gameplay.
       }
     })();
-  }, [worldState, character, quests, log, combat, saveChecked]);
+  }, [worldState, character, quests, log, combat, saveChecked, needsIdentity]);
 
   // Check once on mount whether a manual save already exists, so the Load button knows
   // whether to enable itself and can show when that save was actually made.
