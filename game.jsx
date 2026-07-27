@@ -22,6 +22,19 @@ const PARCHMENT_DARK = "#B79860";
 const MAP_INK = "#3A2A18";
 const MAP_TRAIL = "#8B5A34";
 
+const RACE_SPRITES = {
+  human: "/sprites/human.svg", elf: "/sprites/elf.svg", dwarf: "/sprites/dwarf.svg",
+  orc: "/sprites/goblin.svg", halfling: "/sprites/bandit.svg", tiefling: "/sprites/skeleton.svg",
+};
+const ENEMY_SPRITES = {
+  goblin: "/sprites/goblin.svg", wolf: "/sprites/wolf.svg",
+  bandit: "/sprites/bandit.svg", skeleton: "/sprites/skeleton.svg",
+};
+
+function PixelSprite({ src, alt, size = 72, style = {} }) {
+  return <img src={src} alt={alt} width={size} height={size} draggable="false" style={{ display: "block", objectFit: "contain", imageRendering: "pixelated", ...style }} />;
+}
+
 // Google Fonts, loaded once for the whole app: Cinzel for inscriptional display type
 // (headers, labels, buttons), Crimson Text for body/narration — a period-appropriate
 // display/body pairing instead of the generic system serif stack.
@@ -2167,11 +2180,14 @@ export default function DMMemoryTest() {
 
           {combat && (
             <div style={{ margin: "20px 0", padding: "16px", border: `2px solid ${BLOOD}`, background: "linear-gradient(180deg, #2A1A1A 0%, #1C1210 100%)", boxShadow: "inset 0 0 24px rgba(0,0,0,0.5)", borderRadius: "3px" }}>
-              <div style={{ fontFamily: DISPLAY_FONT, fontSize: "13px", letterSpacing: "0.05em", color: AMBER, marginBottom: "8px", display: "flex", alignItems: "center", gap: "8px" }}>
-                <RavenGlyph size={12} color={BLOOD} /> {combat.enemy.name} — {combat.enemy.hp}/{combat.enemy.maxHp} HP
-              </div>
-              <div style={{ marginBottom: "12px" }}>
-                <StatBar value={combat.enemy.hp} max={combat.enemy.maxHp} color={BLOOD} height={7} />
+              <div style={{ display: "flex", alignItems: "center", gap: "14px", marginBottom: "8px" }}>
+                <PixelSprite src={ENEMY_SPRITES[combat.enemyType] || ENEMY_SPRITES.goblin} alt={`${combat.enemy.name} sprite`} size={76} style={{ background: "#120d0b", border: "1px solid #4a2828" }} />
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontFamily: DISPLAY_FONT, fontSize: "13px", letterSpacing: "0.05em", color: AMBER, marginBottom: "10px", display: "flex", alignItems: "center", gap: "8px" }}>
+                    <RavenGlyph size={12} color={BLOOD} /> {combat.enemy.name} — {combat.enemy.hp}/{combat.enemy.maxHp} HP
+                  </div>
+                  <StatBar value={combat.enemy.hp} max={combat.enemy.maxHp} color={BLOOD} height={7} />
+                </div>
               </div>
               <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
                 {["attack", "defend", "flee"].map((a) => (
@@ -2276,11 +2292,16 @@ export default function DMMemoryTest() {
 
         {character.identity && (
           <LedgerSection title="Identity">
-            <div style={{ color: AMBER, fontFamily: DISPLAY_FONT, fontSize: "13px" }}>{character.identity.name}</div>
-            <div style={{ color: SLATE, fontSize: "11px", marginTop: "2px" }}>
-              {RACE_OPTIONS.find((r) => r.key === character.identity.race)?.label || character.identity.race} · {BACKGROUND_OPTIONS[character.identity.background]?.label || character.identity.background}
-              {character.identity.gender ? ` · ${character.identity.gender}` : ""}
-              {character.identity.age ? ` · Age ${character.identity.age}` : ""}
+            <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+              <PixelSprite src={RACE_SPRITES[character.identity.race] || RACE_SPRITES.human} alt={`${character.identity.race} character sprite`} size={64} style={{ background: "#0e0c09", border: "1px solid #33291D" }} />
+              <div>
+                <div style={{ color: AMBER, fontFamily: DISPLAY_FONT, fontSize: "13px" }}>{character.identity.name}</div>
+                <div style={{ color: SLATE, fontSize: "11px", marginTop: "2px" }}>
+                  {RACE_OPTIONS.find((r) => r.key === character.identity.race)?.label || character.identity.race} · {BACKGROUND_OPTIONS[character.identity.background]?.label || character.identity.background}
+                  {character.identity.gender ? ` · ${character.identity.gender}` : ""}
+                  {character.identity.age ? ` · Age ${character.identity.age}` : ""}
+                </div>
+              </div>
             </div>
             {character.identity.voice && <div style={{ color: SLATE, fontSize: "11px", marginTop: "2px" }}>Voice: {character.identity.voice}</div>}
             {character.identity.appearance && (
@@ -2412,22 +2433,18 @@ export default function DMMemoryTest() {
               const equipDef = EQUIPMENT_TABLE[item.equipmentKey];
               const rarity = RARITY_TIERS[rarityOf(item)];
               const nameColor = rarity.color;
+              const itemSprite = isConsumable ? "/sprites/potion.svg" : equipDef?.slot === "weapon" ? "/sprites/sword.svg" : null;
               return (
                 <div key={item.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", marginBottom: "6px" }}>
-                  <div style={{ minWidth: 0 }}>
-                    <span style={{ color: nameColor }}>• {item.name}</span>
-                    {rarity.label !== "Common" && <span style={{ color: nameColor, fontSize: "10px", marginLeft: "5px" }}>({rarity.label})</span>}
-                    {item.quantity > 1 && <span style={{ color: SLATE }}> ×{item.quantity}</span>}
-                    {isConsumable && (
-                      <span style={{ color: CODE_VOICE, fontSize: "10.5px", marginLeft: "6px" }}>
-                        (+{Math.round(CONSUMABLE_TABLE[item.consumableKind].healAmount * rarity.statMult)} HP)
-                      </span>
-                    )}
-                    {equipDef && (
-                      <span style={{ color: CODE_VOICE, fontSize: "10.5px", marginLeft: "6px" }}>
-                        (+{Math.round((equipDef.slot === "weapon" ? equipDef.atkBonus : equipDef.defBonus) * rarity.statMult)} {equipDef.slot === "weapon" ? "ATK" : "DEF"})
-                      </span>
-                    )}
+                  <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: "6px" }}>
+                    {itemSprite && <PixelSprite src={itemSprite} alt="" size={28} style={{ flexShrink: 0 }} />}
+                    <div>
+                      <span style={{ color: nameColor }}>• {item.name}</span>
+                      {rarity.label !== "Common" && <span style={{ color: nameColor, fontSize: "10px", marginLeft: "5px" }}>({rarity.label})</span>}
+                      {item.quantity > 1 && <span style={{ color: SLATE }}> ×{item.quantity}</span>}
+                      {isConsumable && <span style={{ color: CODE_VOICE, fontSize: "10.5px", marginLeft: "6px" }}>(+{Math.round(CONSUMABLE_TABLE[item.consumableKind].healAmount * rarity.statMult)} HP)</span>}
+                      {equipDef && <span style={{ color: CODE_VOICE, fontSize: "10.5px", marginLeft: "6px" }}>(+{Math.round((equipDef.slot === "weapon" ? equipDef.atkBonus : equipDef.defBonus) * rarity.statMult)} {equipDef.slot === "weapon" ? "ATK" : "DEF"})</span>}
+                    </div>
                   </div>
                   {isConsumable && (
                     <button
@@ -2596,6 +2613,16 @@ function CharacterCreationScreen({ mode, onSubmit }) {
     );
   }
 
+  function raceButton(r) {
+    const selected = race === r.key;
+    return (
+      <button key={r.key} onClick={() => setRace(r.key)} aria-pressed={selected} style={{ width: "88px", padding: "7px", background: selected ? `linear-gradient(180deg, ${BLOOD} 0%, #4A1620 100%)` : "#17120e", border: `1px solid ${selected ? AMBER : "#4A3F2C"}`, color: INK, cursor: "pointer", borderRadius: "2px", fontFamily: DISPLAY_FONT, fontSize: "11px" }}>
+        <PixelSprite src={RACE_SPRITES[r.key]} alt="" size={72} style={{ margin: "0 auto 5px", background: "#090806" }} />
+        {r.label}
+      </button>
+    );
+  }
+
   return (
     <div style={{ minHeight: "100vh", width: "100%", background: "radial-gradient(ellipse at 30% 0%, #211B15 0%, #14110D 65%)", color: INK, fontFamily: BODY_FONT, padding: "32px 20px", display: "flex", justifyContent: "center" }}>
       <div style={{ maxWidth: "600px", width: "100%" }}>
@@ -2651,7 +2678,7 @@ function CharacterCreationScreen({ mode, onSubmit }) {
         <div style={{ marginBottom: "22px" }}>
           {fieldLabel("Race")}
           <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-            {RACE_OPTIONS.map((r) => pillButton(r.key, r.label, race === r.key, () => setRace(r.key)))}
+            {RACE_OPTIONS.map(raceButton)}
           </div>
           {race && <p style={{ color: SLATE, fontSize: "11.5px", marginTop: "8px", lineHeight: 1.5 }}>{RACE_OPTIONS.find((r) => r.key === race).flavor}</p>}
         </div>
@@ -2683,8 +2710,11 @@ function CharacterCreationScreen({ mode, onSubmit }) {
         {mode !== "migrate" && (
           <div style={{ marginBottom: "22px" }}>
             {fieldLabel("Starting Weapon")}
-            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-              {Object.entries(STARTING_WEAPON_OPTIONS).map(([key, w]) => pillButton(key, w.label, weapon === key, () => setWeapon(key)))}
+            <div style={{ display: "flex", gap: "12px", alignItems: "center", flexWrap: "wrap" }}>
+              <PixelSprite src="/sprites/sword.svg" alt="Starting weapon" size={82} style={{ background: "#0e0c09", border: "1px solid #33291D" }} />
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", flex: 1 }}>
+                {Object.entries(STARTING_WEAPON_OPTIONS).map(([key, w]) => pillButton(key, w.label, weapon === key, () => setWeapon(key)))}
+              </div>
             </div>
           </div>
         )}
