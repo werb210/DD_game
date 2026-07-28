@@ -151,6 +151,25 @@ const ATTRIBUTE_DEFS = {
 
 const ATTRIBUTE_CAP = 99;
 const ATTRIBUTE_POINTS_PER_LEVEL = 4;
+const DAILY_TRAINING_CAP = 2;
+
+// Training prices are deliberately code-owned. Early growth is accessible, while the
+// quadratic tail makes instruction near heroic scores a serious investment.
+function trainingCostFor(targetScore) {
+  if (targetScore < 15) return 8;
+  return Math.round(8 + Math.pow(targetScore - 14, 2) * 0.75);
+}
+
+function validTrainableStats(entries) {
+  if (!Array.isArray(entries)) return [];
+  return entries.flatMap((entry) => {
+    const stat = typeof entry?.stat === "string" ? entry.stat.toLowerCase() : "";
+    const maxLevel = Math.floor(Number(entry?.maxLevel));
+    return ATTRIBUTE_DEFS[stat] && Number.isFinite(maxLevel)
+      ? [{ stat, maxLevel: clamp(maxLevel, 1, ATTRIBUTE_CAP) }]
+      : [];
+  });
+}
 
 const initialAttributes = { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 };
 
@@ -407,6 +426,9 @@ const initialCharacter = {
   gold: 10,
   xp: 0,
   pendingAttributePoints: 0,
+  bankedSkillPoints: 0,
+  dailyTrainingUsed: 0,
+  dailyTrainingCap: DAILY_TRAINING_CAP,
   inventory: [
     { id: "item_1", name: "Rusty dagger", consumableKind: null, equipmentKey: "rusty_dagger", rarity: "common", quantity: 1 },
     { id: "item_2", name: "Rations", consumableKind: "ration", equipmentKey: null, rarity: "common", quantity: 3 },
@@ -464,7 +486,7 @@ const TUTORIAL_STEPS = [
   },
   {
     title: "Attributes",
-    body: "You have six attributes: STR, DEX, CON, INT, WIS, CHA. Every level grants 4 points to spend however you like — stack everything into one stat, or spread them out. There's no wrong build.",
+    body: "You have six attributes: STR, DEX, CON, INT, WIS, CHA. Every level banks 4 skill points. Trusted trainers can turn those points into growth, up to two lessons per in-game day, provided you can pay their fee.",
   },
   {
     title: "Abilities",
@@ -497,6 +519,7 @@ const TUTORIAL_STEPS = [
 ];
 
 const initialWorldState = {
+  day: 1,
   locationId: "loc_1",
   // Locations are graph nodes now, not flat strings: { name, connections: [otherLocationIds] }.
   // The graph isn't hand-authored — it builds itself from actual travel. Whenever the
@@ -541,20 +564,20 @@ function rollGoldForTier(tier) {
 }
 
 function addXp(character, amount) {
-  let { xp, level, pendingAttributePoints } = character;
-  pendingAttributePoints = pendingAttributePoints || 0;
+  let { xp, level, bankedSkillPoints } = character;
+  bankedSkillPoints = bankedSkillPoints || 0;
   xp += amount;
   const levelUps = [];
   let healToFull = false;
   while (xp >= xpToNextLevel(level)) {
     xp -= xpToNextLevel(level);
     level += 1;
-    pendingAttributePoints += ATTRIBUTE_POINTS_PER_LEVEL;
+    bankedSkillPoints += ATTRIBUTE_POINTS_PER_LEVEL;
     healToFull = true; // leveling still tops you off, even before you've spent the points
     levelUps.push(level);
   }
   const newMaxHp = getEffectiveStats({ ...character, attributes: character.attributes }).maxHp;
-  return { ...character, xp, level, pendingAttributePoints, hp: healToFull ? newMaxHp : character.hp, levelUps };
+  return { ...character, xp, level, bankedSkillPoints, hp: healToFull ? newMaxHp : character.hp, levelUps };
 }
 
 // ---- AI calls. System prompts explicitly forbid the model from inventing numbers. ----
@@ -581,8 +604,8 @@ Respond with ONLY valid JSON, no markdown fences, no preamble:
   "narration": "string",
   "stateUpdates": {
     "location": null,
-    "newNPCs": [{"name": "string", "memory": "short fact", "traits": "array of 1-3 strings from the fixed trait list below, optional", "goal": "short string, what this NPC wants, optional", "secret": "short string, something hidden about them, optional"}],
-    "npcUpdates": [{"id": "string — exact existing npc id from WORLD STATE", "name": "string, optional — only when this NPC's real name is genuinely revealed in the fiction for the first time", "memory": "updated fact, optional", "traits": "array of 1-3 strings from the fixed trait list, optional — only include if it should change", "goal": "short string, optional — only include if it changes", "secret": "short string, optional — only include if newly revealed or changed"}],
+    "newNPCs": [{"name": "string", "memory": "short fact", "traits": "array of 1-3 strings from the fixed trait list below, optional", "goal": "short string, what this NPC wants, optional", "secret": "short string, something hidden about them, optional", "isTrainer": "boolean, optional", "trainableStats": "optional array of {stat: STR|DEX|CON|INT|WIS|CHA, maxLevel: integer}; maxLevel must equal this NPC's own ability", "trustRequired": "integer, optional; minimum trust for instruction"}],
+    "npcUpdates": [{"id": "string — exact existing npc id from WORLD STATE", "name": "string, optional — only when this NPC's real name is genuinely revealed in the fiction for the first time", "memory": "updated fact, optional", "traits": "array of 1-3 strings from the fixed trait list, optional — only include if it should change", "goal": "short string, optional — only include if it changes", "secret": "short string, optional — only include if newly revealed or changed", "isTrainer": "boolean, optional", "trainableStats": "optional array of {stat: STR|DEX|CON|INT|WIS|CHA, maxLevel: integer}", "trustRequired": "integer, optional"}],
     "reputationDelta": "string or null",
     "worldFacts": ["short new persistent facts, if any"]
   },
@@ -595,6 +618,8 @@ Respond with ONLY valid JSON, no markdown fences, no preamble:
     {"type": "quest_complete", "title": "string — must match an active quest title exactly"},
     {"type": "npc_relationship", "id": "string — exact existing npc id from WORLD STATE", "interaction": "helped|betrayed|threatened|impressed|protected|insulted|spared|smallKindness|smallSlight"},
     {"type": "shop_open", "id": "string — exact existing npc id from WORLD STATE", "merchantType": "general_store|blacksmith|apothecary|fence"}
+    ,{"type": "training_offer", "id": "exact existing trainer npc id", "stat": "STR|DEX|CON|INT|WIS|CHA"}
+    ,{"type": "day_advance", "reason": "short description of the sleep or time skip"}
   ],
   "suggestedActions": ["string", "string", "string"]
 }
@@ -604,6 +629,8 @@ For "location": use null if unchanged; {"existingId": "loc_2"} to move to an alr
 Each entry in WORLD STATE.locations has a "connections" array — the other location ids directly reachable from it based on where the player has actually traveled before. Moving to a location already listed in the current location's connections is a short, ordinary trip — narrate it briefly. Moving to a known location that ISN'T in the current connections (somewhere the player has heard of but never traveled to directly from here) should read like a real journey — time passing, distance covered — rather than an instant unexplained jump, even though it's still a single action. Code will automatically treat any move as establishing a new direct route between the two places, so once you've narrated that journey once, future trips between them can be brief.
 
 Omit event types that don't apply this turn — an empty array is fine and common.
+
+For training: only emit training_offer while the player is speaking with an existing NPC whose WORLD STATE record has isTrainer true, whose trust requirement is met, and whose requested stat is listed in trainableStats and not taughtOut. Code presents the price and enforces every resource/cap check. If daily training is already exhausted, narrate that the player is too worn out and do not emit another offer. Emit day_advance whenever a full in-game day passes (sleeping, an inn stay, or a story-forced time skip); code increments the day and resets the global daily training counter.
 
 Whenever your narration describes the player paying for anything — a room, a meal, a bribe, goods from a merchant — you MUST include a matching "gold_spent" event with an appropriate tier. Narrating a purchase without the matching event means the cost never actually happens to the player's gold, which breaks the game's economy — never narrate spending money without it.
 
@@ -1049,6 +1076,8 @@ function characterSummaryForPrompt(character, quests) {
     backstory: character.identity?.backstory || null,
     level: character.level,
     condition: hpStatus,
+    trainingStatus: (character.dailyTrainingUsed || 0) >= (character.dailyTrainingCap || DAILY_TRAINING_CAP) ? "worn out for today" : "able to train today",
+    hasBankedSkillPoints: (character.bankedSkillPoints || 0) > 0,
     notableTraits, // for narrative color only — never cite the numbers behind these
     narrativeAbilities, // flavor-only unlocked traits — never a hard mechanical gate
     inventory: character.inventory.map((item) =>
@@ -1068,6 +1097,7 @@ export default function DMMemoryTest() {
   const [quests, setQuests] = useState([]);
   const [combat, setCombat] = useState(null); // { enemyType, enemy: {name,hp,maxHp,attack,defense} }
   const [shop, setShop] = useState(null); // { npcId, merchantType }
+  const [trainingOffer, setTrainingOffer] = useState(null); // { npcId, stat }
   // Monotonic ID counters — refs, not state, since incrementing them shouldn't itself
   // trigger a render. Code is the only thing that ever assigns an id; Claude only ever
   // receives and echoes them back (for npc/location ids) or never sees them at all (items).
@@ -1139,7 +1169,13 @@ export default function DMMemoryTest() {
       Object.entries(saved.worldState.locations || {}).forEach(([id, value]) => {
         migratedLocations[id] = typeof value === "string" ? { name: value, connections: [] } : { connections: [], ...value };
       });
-      setWorldState({ ...saved.worldState, locations: migratedLocations });
+      const migratedNpcs = (saved.worldState.npcs || []).map((npc) => ({
+        ...npc,
+        isTrainer: !!npc.isTrainer,
+        trainableStats: Array.isArray(npc.trainableStats) ? npc.trainableStats : [],
+        taughtOut: npc.taughtOut || {},
+      }));
+      setWorldState({ day: 1, ...saved.worldState, locations: migratedLocations, npcs: migratedNpcs });
     }
     if (saved.character) {
       // Migration: saves from before the consumables system stored inventory as a
@@ -1170,9 +1206,12 @@ export default function DMMemoryTest() {
       const { attack: _oldAttack, defense: _oldDefense, maxHp: _oldMaxHp, pendingLevelUps: _oldPending, ...restOfSavedCharacter } = saved.character;
       setCharacter({
         equipped: { weapon: null, armor: null },
+        bankedSkillPoints: saved.character.bankedSkillPoints ?? migratedPendingPoints,
+        dailyTrainingUsed: saved.character.dailyTrainingUsed ?? 0,
+        dailyTrainingCap: saved.character.dailyTrainingCap ?? DAILY_TRAINING_CAP,
         ...restOfSavedCharacter,
         attributes: migratedAttributes,
-        pendingAttributePoints: migratedPendingPoints,
+        pendingAttributePoints: 0,
         inventory: migratedInventory,
       });
     }
@@ -1180,6 +1219,7 @@ export default function DMMemoryTest() {
     if (saved.log) setLog(saved.log);
     if (saved.combat !== undefined) setCombat(saved.combat);
     setShop(null); // shop panels never persist — always resume back out in the world
+    setTrainingOffer(null);
     // Restoring the id counters is essential, not optional — without this, a fresh
     // session would start both counters back at their defaults and the next new NPC,
     // location, or item would collide with an id that already exists.
@@ -1715,7 +1755,7 @@ export default function DMMemoryTest() {
           setCharacter((c) => {
             const withGold = { ...c, gold: c.gold + quest.goldReward };
             const withXp = addXp(withGold, quest.xpReward);
-            if (withXp.levelUps.length) pushSystemLine(`★ Level up! Now level ${withXp.level}. Choose your growth below.`);
+            if (withXp.levelUps.length) pushSystemLine(`★ Level up! Now level ${withXp.level}. ${ATTRIBUTE_POINTS_PER_LEVEL} skill points banked for training.`);
             return withXp;
           });
           pushSystemLine(`✓ Quest complete: "${quest.title}" (+${quest.xpReward} XP, +${quest.goldReward} gold)`);
@@ -1788,12 +1828,69 @@ export default function DMMemoryTest() {
           }),
         }));
         setShop({ npcId: event.id, merchantType: event.merchantType });
+      } else if (event.type === "training_offer") {
+        const trainer = worldState.npcs.find((n) => n.id === event.id);
+        const stat = typeof event.stat === "string" ? event.stat.toLowerCase() : "";
+        const lesson = trainer?.trainableStats?.find((entry) => entry.stat === stat);
+        if (!trainer?.isTrainer || !lesson || (trainer.trust || 0) < (trainer.trustRequired || 0) || trainer.taughtOut?.[stat]) {
+          pushSystemLine(`⚠ Invalid training offer was ignored.`);
+        } else if ((character.dailyTrainingUsed || 0) >= (character.dailyTrainingCap || DAILY_TRAINING_CAP)) {
+          pushSystemLine(`You're worn out for today. Rest before training again.`);
+        } else {
+          setTrainingOffer({ npcId: trainer.id, stat });
+        }
+      } else if (event.type === "day_advance") {
+        setWorldState((prev) => ({ ...prev, day: (prev.day || 1) + 1 }));
+        setCharacter((prev) => ({ ...prev, dailyTrainingUsed: 0 }));
+        setTrainingOffer(null);
+        pushSystemLine(`☀ A new day begins${event.reason ? ` — ${event.reason}` : ""}. Training stamina restored.`);
       }
     });
   }
 
+  function acceptTraining() {
+    if (!trainingOffer) return;
+    const trainer = worldState.npcs.find((npc) => npc.id === trainingOffer.npcId);
+    const lesson = trainer?.trainableStats?.find((entry) => entry.stat === trainingOffer.stat);
+    const current = character.attributes[trainingOffer.stat];
+    const cost = trainingCostFor(current);
+    let failure = null;
+    if (!trainer?.isTrainer || !lesson || (trainer.trust || 0) < (trainer.trustRequired || 0)) failure = "This trainer is not willing or able to teach you.";
+    else if (trainer.taughtOut?.[trainingOffer.stat] || current >= lesson.maxLevel) failure = `${trainer.name} has taught you all they know about ${ATTRIBUTE_DEFS[trainingOffer.stat].label}.`;
+    else if ((character.bankedSkillPoints || 0) <= 0) failure = "You have no banked skill points to invest.";
+    else if ((character.dailyTrainingUsed || 0) >= (character.dailyTrainingCap || DAILY_TRAINING_CAP)) failure = "You're worn out for today.";
+    else if (character.gold < cost) failure = `You need ${cost} gold for this lesson.`;
+    if (failure) {
+      pushSystemLine(failure);
+      setTrainingOffer(null);
+      return;
+    }
+
+    const nextScore = current + 1;
+    setCharacter((prev) => ({
+      ...prev,
+      gold: prev.gold - cost,
+      bankedSkillPoints: prev.bankedSkillPoints - 1,
+      dailyTrainingUsed: (prev.dailyTrainingUsed || 0) + 1,
+      attributes: { ...prev.attributes, [trainingOffer.stat]: nextScore },
+    }));
+    if (nextScore >= lesson.maxLevel) {
+      setWorldState((prev) => ({
+        ...prev,
+        npcs: prev.npcs.map((npc) => npc.id !== trainer.id ? npc : {
+          ...npc,
+          taughtOut: { ...(npc.taughtOut || {}), [trainingOffer.stat]: true },
+          memory: `${npc.memory || ""} ${npc.name} has taught Caden all they know about ${ATTRIBUTE_DEFS[trainingOffer.stat].label}.`.trim(),
+        }),
+      }));
+    }
+    setLog((prev) => [...prev, { role: "dm", narration: `${trainer.name} puts you through a focused lesson in ${ATTRIBUTE_DEFS[trainingOffer.stat].label.toLowerCase()}. The drills are punishing, but by the end your hard-won improvement is unmistakable.`, suggestedActions: null }]);
+    pushSystemLine(`↑ ${ATTRIBUTE_DEFS[trainingOffer.stat].short} ${current} → ${nextScore} · -${cost} gold · training ${(character.dailyTrainingUsed || 0) + 1}/${character.dailyTrainingCap || DAILY_TRAINING_CAP}`);
+    setTrainingOffer(null);
+  }
+
   async function submitAction(action) {
-    if (!action.trim() || loading || combat || shop || character.pendingAttributePoints > 0) return;
+    if (!action.trim() || loading || combat || shop || trainingOffer) return;
     setLoading(true);
     setError(null);
     setLog((l) => [...l, { role: "player", text: action }]);
@@ -1853,12 +1950,16 @@ export default function DMMemoryTest() {
           const validTraits = Array.isArray(npc.traits) ? npc.traits.filter((t) => NPC_TRAITS.includes(t)) : [];
           const existingByName = next.npcs.findIndex((n) => n.name === npc.name);
           if (existingByName >= 0) {
+            const trainerStats = validTrainableStats(npc.trainableStats);
             next.npcs[existingByName] = {
               ...next.npcs[existingByName],
               memory: npc.memory,
               ...(validTraits.length ? { traits: validTraits } : {}),
               ...(npc.goal ? { goal: npc.goal } : {}),
               ...(npc.secret ? { secret: npc.secret } : {}),
+              ...(typeof npc.isTrainer === "boolean" ? { isTrainer: npc.isTrainer } : {}),
+              ...(trainerStats.length ? { trainableStats: trainerStats } : {}),
+              ...(Number.isFinite(Number(npc.trustRequired)) ? { trustRequired: Math.floor(Number(npc.trustRequired)) } : {}),
             };
           } else {
             const newId = `npc_${nextNpcIdRef.current++}`;
@@ -1873,6 +1974,10 @@ export default function DMMemoryTest() {
               goal: npc.goal || null,
               secret: npc.secret || null,
               personalFear: null,
+              isTrainer: !!npc.isTrainer,
+              trainableStats: validTrainableStats(npc.trainableStats),
+              trustRequired: Number.isFinite(Number(npc.trustRequired)) ? Math.floor(Number(npc.trustRequired)) : 0,
+              taughtOut: {},
             });
           }
         });
@@ -1884,6 +1989,7 @@ export default function DMMemoryTest() {
             return;
           }
           const validTraits = Array.isArray(update.traits) ? update.traits.filter((t) => NPC_TRAITS.includes(t)) : null;
+          const trainerStats = validTrainableStats(update.trainableStats);
           next.npcs[idx] = {
             ...next.npcs[idx],
             ...(update.name ? { name: update.name } : {}),
@@ -1891,6 +1997,9 @@ export default function DMMemoryTest() {
             ...(validTraits && validTraits.length ? { traits: validTraits } : {}),
             ...(update.goal ? { goal: update.goal } : {}),
             ...(update.secret ? { secret: update.secret } : {}),
+            ...(typeof update.isTrainer === "boolean" ? { isTrainer: update.isTrainer } : {}),
+            ...(trainerStats.length ? { trainableStats: trainerStats } : {}),
+            ...(Number.isFinite(Number(update.trustRequired)) ? { trustRequired: Math.floor(Number(update.trustRequired)) } : {}),
           };
         });
 
@@ -1998,7 +2107,7 @@ export default function DMMemoryTest() {
     try {
       const result = await callModel(COMBAT_NARRATION_SYSTEM_PROMPT, JSON.stringify(facts, null, 2), 400, 1, null, (info) => pushDebugEntry(`combat:${actionType}`, info));
       setLog((l) => [...l, { role: "dm", narration: result.narration, suggestedActions: combatEnded ? ["Look around", "Check inventory", "Continue on"] : null }]);
-      if (facts.enemyDefeated) pushSystemLine(`✓ Enemy defeated (+${facts.xpGained} XP, +${facts.goldGained} gold)${nextCharacter.levelUps?.length ? ` — Level up! Now level ${nextCharacter.level}. Choose your growth below.` : ""}`);
+      if (facts.enemyDefeated) pushSystemLine(`✓ Enemy defeated (+${facts.xpGained} XP, +${facts.goldGained} gold)${nextCharacter.levelUps?.length ? ` — Level up! Now level ${nextCharacter.level}; ${ATTRIBUTE_POINTS_PER_LEVEL} skill points banked.` : ""}`);
       if (facts.playerDefeated) pushSystemLine(`✝ You were defeated and wake later, battered, at 1 HP.`);
       if (facts.fled) pushSystemLine(`→ You escaped the fight.`);
       if (facts.enemyFled) pushSystemLine(`→ ${combat.enemy.name} breaks and flees — no reward, but the fight's over.`);
@@ -2029,6 +2138,7 @@ export default function DMMemoryTest() {
 
   const characterEffStats = getEffectiveStats(character);
   const shopNpc = shop ? worldState.npcs.find((n) => n.id === shop.npcId) : null;
+  const trainingNpc = trainingOffer ? worldState.npcs.find((n) => n.id === trainingOffer.npcId) : null;
 
   return (
     <>
@@ -2221,8 +2331,14 @@ export default function DMMemoryTest() {
             />
           )}
 
-          {character.pendingAttributePoints > 0 && (
-            <AttributePanel character={character} onSpend={spendAttributePoint} loading={loading} />
+          {trainingOffer && trainingNpc && (
+            <TrainingPanel
+              trainer={trainingNpc}
+              stat={trainingOffer.stat}
+              character={character}
+              onAccept={acceptTraining}
+              onDecline={() => setTrainingOffer(null)}
+            />
           )}
 
           {loading && <div style={{ fontFamily: "ui-monospace, monospace", fontSize: "13px", color: SLATE, fontStyle: "italic" }}>the DM considers...</div>}
@@ -2278,8 +2394,8 @@ export default function DMMemoryTest() {
         </div>
 
         <form onSubmit={(e) => { e.preventDefault(); submitAction(input); }} style={{ display: "flex", borderTop: "1px solid #33291D", padding: "12px 16px", gap: "10px" }}>
-          <input value={input} onChange={(e) => setInput(e.target.value)} placeholder={combat ? "Resolve combat above first..." : shop ? "Finish trading above first..." : character.pendingAttributePoints > 0 ? "Spend your attribute points above first..." : "What do you do?"} disabled={loading || !!combat || !!shop || character.pendingAttributePoints > 0} style={{ flex: 1, background: "#1A1611", border: "1px solid #33291D", color: INK, padding: "10px 12px", fontFamily: BODY_FONT, fontSize: "15px", outline: "none", opacity: combat || shop || character.pendingAttributePoints > 0 ? 0.4 : 1, borderRadius: "2px" }} />
-          <button type="submit" disabled={loading || !!combat || !!shop || character.pendingAttributePoints > 0} style={{ background: `linear-gradient(180deg, ${BLOOD} 0%, #4A1620 100%)`, border: `1px solid ${BLOOD}`, color: INK, padding: "10px 20px", fontFamily: DISPLAY_FONT, fontSize: "12.5px", letterSpacing: "0.06em", textTransform: "uppercase", cursor: loading || combat || shop || character.pendingAttributePoints > 0 ? "default" : "pointer", opacity: loading || combat || shop || character.pendingAttributePoints > 0 ? 0.5 : 1, borderRadius: "2px" }}>
+          <input value={input} onChange={(e) => setInput(e.target.value)} placeholder={combat ? "Resolve combat above first..." : shop ? "Finish trading above first..." : trainingOffer ? "Answer the training offer above first..." : "What do you do?"} disabled={loading || !!combat || !!shop || !!trainingOffer} style={{ flex: 1, background: "#1A1611", border: "1px solid #33291D", color: INK, padding: "10px 12px", fontFamily: BODY_FONT, fontSize: "15px", outline: "none", opacity: combat || shop || trainingOffer ? 0.4 : 1, borderRadius: "2px" }} />
+          <button type="submit" disabled={loading || !!combat || !!shop || !!trainingOffer} style={{ background: `linear-gradient(180deg, ${BLOOD} 0%, #4A1620 100%)`, border: `1px solid ${BLOOD}`, color: INK, padding: "10px 20px", fontFamily: DISPLAY_FONT, fontSize: "12.5px", letterSpacing: "0.06em", textTransform: "uppercase", cursor: loading || combat || shop || trainingOffer ? "default" : "pointer", opacity: loading || combat || shop || trainingOffer ? 0.5 : 1, borderRadius: "2px" }}>
             Act
           </button>
         </form>
@@ -2316,9 +2432,9 @@ export default function DMMemoryTest() {
         <LedgerSection title="Level & HP">
           <div style={{ color: INK }}>
             Level {character.level}
-            {character.pendingAttributePoints > 0 && (
+            {character.bankedSkillPoints > 0 && (
               <span style={{ color: CODE_VOICE, fontSize: "10.5px", marginLeft: "8px" }}>
-                ★ {character.pendingAttributePoints} attribute point{character.pendingAttributePoints > 1 ? "s" : ""} pending
+                ★ {character.bankedSkillPoints} skill point{character.bankedSkillPoints > 1 ? "s" : ""} banked
               </span>
             )}
           </div>
@@ -2337,6 +2453,12 @@ export default function DMMemoryTest() {
           <div style={{ marginTop: "4px" }}>
             <StatBar value={character.xp} max={xpToNextLevel(character.level)} color={AMBER} height={5} />
           </div>
+        </LedgerSection>
+
+        <LedgerSection title="Training">
+          <div style={{ color: INK }}>Banked skill points: <span style={{ color: AMBER }}>{character.bankedSkillPoints || 0}</span></div>
+          <div style={{ color: CODE_VOICE, marginTop: "3px" }}>Training: {character.dailyTrainingUsed || 0}/{character.dailyTrainingCap || DAILY_TRAINING_CAP} today</div>
+          <div style={{ color: DIM, fontSize: "10.5px", marginTop: "3px" }}>Day {worldState.day || 1} · {(character.dailyTrainingCap || DAILY_TRAINING_CAP) - (character.dailyTrainingUsed || 0)} session(s) remaining</div>
         </LedgerSection>
 
         <LedgerSection title="Attributes">
@@ -2541,6 +2663,11 @@ export default function DMMemoryTest() {
                 )}
                 {n.secret && (
                   <div style={{ color: WOUND, paddingLeft: "8px", fontSize: "11px", marginTop: "2px", fontStyle: "italic" }}>Secret: {n.secret}</div>
+                )}
+                {n.isTrainer && (
+                  <div style={{ color: AMBER, paddingLeft: "8px", fontSize: "11px", marginTop: "3px" }}>
+                    Trainer · trust required {n.trustRequired || 0} · {(n.trainableStats || []).map((entry) => `${ATTRIBUTE_DEFS[entry.stat]?.short || entry.stat.toUpperCase()} to ${entry.maxLevel}${n.taughtOut?.[entry.stat] ? " (taught out)" : ""}`).join(" · ") || "no disciplines"}
+                  </div>
                 )}
               </div>
             ))
@@ -3261,6 +3388,29 @@ function ShopPanel({ shopNpc, merchantType, character, onBuy, onSell, onClose, l
 // a bordered box means code has taken over and text input is paused until you're done.
 // Spending never calls the AI, and there's no soft cap here beyond ATTRIBUTE_CAP itself —
 // dumping every point into one attribute is a fully valid, supported build choice.
+function TrainingPanel({ trainer, stat, character, onAccept, onDecline }) {
+  const lesson = trainer.trainableStats.find((entry) => entry.stat === stat);
+  const current = character.attributes[stat];
+  const cost = trainingCostFor(current);
+  const cap = character.dailyTrainingCap || DAILY_TRAINING_CAP;
+  const reason = current >= lesson.maxLevel ? `${trainer.name} has taught you all they know.`
+    : (character.bankedSkillPoints || 0) <= 0 ? "No banked skill points."
+    : (character.dailyTrainingUsed || 0) >= cap ? "You're worn out for today."
+    : character.gold < cost ? `You need ${cost} gold.` : null;
+  return (
+    <div style={{ margin: "20px 0", padding: "16px", border: `2px solid ${AMBER}`, background: "linear-gradient(180deg, #292216 0%, #1C1710 100%)", borderRadius: "3px" }}>
+      <div style={{ fontFamily: DISPLAY_FONT, color: AMBER, marginBottom: "7px" }}><RavenGlyph size={12} /> Training with {trainer.name}</div>
+      <div style={{ color: INK, marginBottom: "5px" }}>{ATTRIBUTE_DEFS[stat].label} {current} → {current + 1}</div>
+      <div style={{ color: SLATE, fontFamily: "ui-monospace, monospace", fontSize: "11px", marginBottom: "12px" }}>{cost} gold · 1 banked skill point · session {(character.dailyTrainingUsed || 0) + 1}/{cap}</div>
+      {reason && <div style={{ color: WOUND, marginBottom: "10px" }}>{reason}</div>}
+      <div style={{ display: "flex", gap: "8px" }}>
+        <button onClick={onAccept} disabled={!!reason} style={{ background: reason ? "transparent" : `linear-gradient(180deg, ${BLOOD} 0%, #4A1620 100%)`, border: `1px solid ${reason ? DIM : BLOOD}`, color: reason ? DIM : INK, padding: "8px 16px", cursor: reason ? "default" : "pointer", fontFamily: DISPLAY_FONT }}>Accept lesson</button>
+        <button onClick={onDecline} style={{ background: "transparent", border: "1px solid #4A3F2C", color: SLATE, padding: "8px 16px", cursor: "pointer", fontFamily: DISPLAY_FONT }}>Not now</button>
+      </div>
+    </div>
+  );
+}
+
 function AttributePanel({ character, onSpend, loading }) {
   return (
     <div style={{ margin: "20px 0", padding: "16px", border: `2px solid ${CODE_VOICE}`, background: "linear-gradient(180deg, #16232A 0%, #131D22 100%)", boxShadow: "inset 0 0 24px rgba(0,0,0,0.4)", borderRadius: "3px" }}>
