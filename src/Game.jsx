@@ -473,7 +473,6 @@ const initialCharacter = {
   identity: null, // { name, race, background, backstory, gender, age, appearance, weapon, voice } — set once at character creation
   gold: 10,
   xp: 0,
-  pendingAttributePoints: 0,
   bankedSkillPoints: 0,
   dailyTrainingUsed: 0,
   dailyTrainingCap: DAILY_TRAINING_CAP,
@@ -1259,7 +1258,6 @@ export default function DMMemoryTest() {
         dailyTrainingCap: saved.character.dailyTrainingCap ?? DAILY_TRAINING_CAP,
         ...restOfSavedCharacter,
         attributes: migratedAttributes,
-        pendingAttributePoints: 0,
         inventory: migratedInventory,
       });
     }
@@ -1636,20 +1634,6 @@ export default function DMMemoryTest() {
   // Using a consumable is entirely code-resolved — no AI call needed, matching how gold
   // and loot already work. The effect amount comes only from CONSUMABLE_TABLE, never from
   // whatever Claude originally called the item in its narration.
-  // Spending an attribute point is entirely code-resolved, same as equipping gear or
-  // using a consumable — no AI call. Full build freedom, on purpose: nothing here stops
-  // a player from dumping every point into one attribute if that's the build they want.
-  function spendAttributePoint(attrKey) {
-    if (character.pendingAttributePoints <= 0) return;
-    if (!ATTRIBUTE_DEFS[attrKey]) return;
-    if (character.attributes[attrKey] >= ATTRIBUTE_CAP) return;
-    setCharacter((c) => ({
-      ...c,
-      pendingAttributePoints: c.pendingAttributePoints - 1,
-      attributes: { ...c.attributes, [attrKey]: Math.min(ATTRIBUTE_CAP, c.attributes[attrKey] + 1) },
-    }));
-  }
-
   function useConsumable(itemId) {
     const idx = character.inventory.findIndex((i) => i.id === itemId);
     if (idx === -1) return;
@@ -2207,7 +2191,7 @@ export default function DMMemoryTest() {
           worldState={worldState}
           onClose={() => setMapOpen(false)}
           onTravel={(name) => { setMapOpen(false); submitAction(`Travel to ${name}`); }}
-          canTravel={!loading && !combat && !shop && character.pendingAttributePoints === 0}
+          canTravel={!loading && !combat && !shop}
         />
       )}
       {pauseOpen && (
@@ -2524,22 +2508,12 @@ export default function DMMemoryTest() {
           {Object.entries(ATTRIBUTE_DEFS).map(([key, def]) => {
             const value = character.attributes[key];
             const milestone = milestoneFor(value);
-            const canSpend = character.pendingAttributePoints > 0 && value < ATTRIBUTE_CAP;
             return (
               <div key={key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", marginBottom: "6px" }}>
                 <div style={{ color: INK, minWidth: 0 }}>
                   {def.short} <span style={{ color: AMBER }}>{value}</span>
                   {milestone && <span style={{ color: SLATE, fontSize: "10.5px", marginLeft: "6px" }}>{milestone.label}</span>}
                 </div>
-                {character.pendingAttributePoints > 0 && (
-                  <button
-                    onClick={() => spendAttributePoint(key)}
-                    disabled={loading || !canSpend}
-                    style={{ flexShrink: 0, background: "transparent", border: `1px solid ${canSpend ? CODE_VOICE : "#4A3F2C"}`, color: canSpend ? CODE_VOICE : DIM, padding: "2px 9px", fontFamily: "ui-monospace, monospace", fontSize: "11px", cursor: loading || !canSpend ? "default" : "pointer" }}
-                  >
-                    +1
-                  </button>
-                )}
               </div>
             );
           })}
@@ -2683,7 +2657,7 @@ export default function DMMemoryTest() {
                   <button
                     key={id}
                     onClick={() => submitAction(`Travel to ${worldState.locations[id]?.name}`)}
-                    disabled={loading || !!combat || !!shop || character.pendingAttributePoints > 0}
+                    disabled={loading || !!combat || !!shop}
                     style={{ background: "transparent", border: "1px solid #4A3F2C", color: SLATE, padding: "3px 9px", fontFamily: "ui-monospace, monospace", fontSize: "10.5px", cursor: loading ? "default" : "pointer", opacity: loading ? 0.5 : 1 }}
                   >
                     → {worldState.locations[id]?.name}
@@ -3469,41 +3443,6 @@ function TrainingPanel({ trainer, stat, character, onAccept, onDecline }) {
       <div style={{ display: "flex", gap: "8px" }}>
         <button onClick={onAccept} disabled={!!reason} style={{ background: reason ? "transparent" : `linear-gradient(180deg, ${BLOOD} 0%, #4A1620 100%)`, border: `1px solid ${reason ? DIM : BLOOD}`, color: reason ? DIM : INK, padding: "8px 16px", cursor: reason ? "default" : "pointer", fontFamily: DISPLAY_FONT }}>Accept lesson</button>
         <button onClick={onDecline} style={{ background: "transparent", border: "1px solid #4A3F2C", color: SLATE, padding: "8px 16px", cursor: "pointer", fontFamily: DISPLAY_FONT }}>Not now</button>
-      </div>
-    </div>
-  );
-}
-
-function AttributePanel({ character, onSpend, loading }) {
-  return (
-    <div style={{ margin: "20px 0", padding: "16px", border: `2px solid ${CODE_VOICE}`, background: "linear-gradient(180deg, #16232A 0%, #131D22 100%)", boxShadow: "inset 0 0 24px rgba(0,0,0,0.4)", borderRadius: "3px" }}>
-      <div style={{ fontFamily: DISPLAY_FONT, fontSize: "13px", letterSpacing: "0.05em", color: CODE_VOICE, marginBottom: "4px", display: "flex", alignItems: "center", gap: "8px" }}>
-        <RavenGlyph size={12} color={CODE_VOICE} /> Level {character.level} — spend your attribute points
-      </div>
-      <div style={{ color: SLATE, fontSize: "11px", marginBottom: "12px", fontFamily: "ui-monospace, monospace" }}>
-        {character.pendingAttributePoints} point{character.pendingAttributePoints > 1 ? "s" : ""} to spend — put them anywhere, any way you like
-      </div>
-      <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-        {Object.entries(ATTRIBUTE_DEFS).map(([key, def]) => {
-          const value = character.attributes[key];
-          const milestone = milestoneFor(value);
-          const atCap = value >= ATTRIBUTE_CAP;
-          return (
-            <button
-              key={key}
-              onClick={() => onSpend(key)}
-              disabled={loading || atCap}
-              style={{ background: "linear-gradient(180deg, #1C2A30 0%, #131D22 100%)", border: `1px solid ${CODE_VOICE}`, color: INK, padding: "10px 16px", fontFamily: DISPLAY_FONT, fontSize: "12.5px", letterSpacing: "0.03em", cursor: loading || atCap ? "default" : "pointer", opacity: loading || atCap ? 0.5 : 1, borderRadius: "2px", textAlign: "left" }}
-            >
-              <div style={{ color: CODE_VOICE }}>
-                {def.label} <span style={{ color: AMBER }}>{value}</span>
-              </div>
-              <div style={{ color: SLATE, fontSize: "10.5px", fontFamily: "ui-monospace, monospace", marginTop: "2px" }}>
-                {atCap ? "at cap" : `${milestone ? milestone.label : ""} → +1`}
-              </div>
-            </button>
-          );
-        })}
       </div>
     </div>
   );
