@@ -1,6 +1,6 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import Game from '../game.jsx'
+import Game from './Game.jsx'
 
 if (!window.storage) {
   window.storage = {

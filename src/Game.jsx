@@ -1,5 +1,36 @@
 import React, { useState, useRef, useEffect } from 'react';
 
+import dwarfPortrait from './assets/dwarf_portrait.png';
+import elfPortrait from './assets/elf_portrait.png';
+import halflingPortrait from './assets/halfling_portrait.png';
+import humanPortrait from './assets/human_portrait.png';
+import orcPortrait from './assets/orc_portrait.png';
+import tieflingPortrait from './assets/tiefling_portrait.png';
+import banditSprite from './assets/bandit.png';
+import goblinSprite from './assets/goblin.png';
+import skeletonSprite from './assets/skeleton.png';
+import wolfSprite from './assets/wolf.png';
+import chainmailIcon from './assets/armor_chainmail.png';
+import leatherIcon from './assets/armor_leather.png';
+import plateIcon from './assets/armor_plate.png';
+import robesIcon from './assets/armor_robes.png';
+import swordIcon from './assets/iron_sword.png';
+import axeIcon from './assets/item_axe.png';
+import bowIcon from './assets/item_bow.png';
+import daggerIcon from './assets/item_dagger.png';
+import hammerIcon from './assets/item_hammer.png';
+import spearIcon from './assets/item_spear.png';
+import staffIcon from './assets/item_staff.png';
+import healingPotionIcon from './assets/healing_potion.png';
+import coinIcon from './assets/hud_coin.png';
+import heartIcon from './assets/hud_heart.png';
+import scrollIcon from './assets/hud_scroll.png';
+import shieldIcon from './assets/hud_shield.png';
+import dungeonLocation from './assets/loc_dungeon.png';
+import forestRoadLocation from './assets/loc_forest_road.png';
+import innLocation from './assets/loc_inn.png';
+import villageLocation from './assets/loc_village.png';
+
 // ---- Design tokens ----
 // Grimdark medieval reskin: cold iron, old blood, tarnished gold leaf on parchment ink.
 // CODE_VOICE keeps its structural job (marking code-determined outcomes) but is now a
@@ -23,13 +54,30 @@ const MAP_INK = "#3A2A18";
 const MAP_TRAIL = "#8B5A34";
 
 const RACE_SPRITES = {
-  human: "/sprites/human.svg", elf: "/sprites/elf.svg", dwarf: "/sprites/dwarf.svg",
-  orc: "/sprites/goblin.svg", halfling: "/sprites/bandit.svg", tiefling: "/sprites/skeleton.svg",
+  human: humanPortrait, elf: elfPortrait, dwarf: dwarfPortrait,
+  orc: orcPortrait, halfling: halflingPortrait, tiefling: tieflingPortrait,
 };
 const ENEMY_SPRITES = {
-  goblin: "/sprites/goblin.svg", wolf: "/sprites/wolf.svg",
-  bandit: "/sprites/bandit.svg", skeleton: "/sprites/skeleton.svg",
+  goblin: goblinSprite, wolf: wolfSprite,
+  bandit: banditSprite, skeleton: skeletonSprite,
 };
+
+const EQUIPMENT_SPRITES = {
+  rusty_dagger: daggerIcon, steel_dagger: daggerIcon, iron_sword: swordIcon,
+  silver_rapier: swordIcon, war_axe: axeIcon, oak_staff: staffIcon,
+  robes: robesIcon, leather_armor: leatherIcon, chainmail: chainmailIcon,
+  plate_armor: plateIcon, starting_sword: swordIcon, starting_axe: axeIcon,
+  starting_spear: spearIcon, starting_bow: bowIcon, starting_staff: staffIcon,
+  starting_hammer: hammerIcon,
+};
+
+function locationSpriteFor(name = "") {
+  const normalized = name.toLowerCase();
+  if (normalized.includes("dungeon") || normalized.includes("crypt") || normalized.includes("cave")) return dungeonLocation;
+  if (normalized.includes("forest") || normalized.includes("road") || normalized.includes("trail")) return forestRoadLocation;
+  if (normalized.includes("village") || normalized.includes("town")) return villageLocation;
+  return innLocation;
+}
 
 function PixelSprite({ src, alt, size = 72, style = {} }) {
   return <img src={src} alt={alt} width={size} height={size} draggable="false" style={{ display: "block", objectFit: "contain", imageRendering: "pixelated", ...style }} />;
@@ -2247,6 +2295,17 @@ export default function DMMemoryTest() {
         )}
 
         <div ref={scrollRef} style={{ flex: 1, overflowY: "auto", padding: "24px 28px" }}>
+          <div style={{ position: "relative", height: "150px", marginBottom: "22px", overflow: "hidden", border: "1px solid #33291D", borderRadius: "3px" }}>
+            <PixelSprite
+              src={locationSpriteFor(worldState.locations[worldState.locationId]?.name)}
+              alt={worldState.locations[worldState.locationId]?.name || "Current location"}
+              size={undefined}
+              style={{ width: "100%", height: "100%", objectFit: "cover" }}
+            />
+            <div style={{ position: "absolute", inset: "auto 0 0", padding: "18px 14px 10px", background: "linear-gradient(transparent, rgba(10,8,6,0.95))", color: AMBER, fontFamily: DISPLAY_FONT, fontSize: "12px", letterSpacing: "0.06em" }}>
+              {worldState.locations[worldState.locationId]?.name}
+            </div>
+          </div>
           {log.map((entry, i) => {
             if (entry.role === "player") {
               return (
@@ -2438,14 +2497,14 @@ export default function DMMemoryTest() {
               </span>
             )}
           </div>
-          <div style={{ marginTop: "4px", color: character.hp <= characterEffStats.maxHp * 0.3 ? WOUND : INK }}>
-            HP {character.hp} / {characterEffStats.maxHp}
+          <div style={{ marginTop: "4px", color: character.hp <= characterEffStats.maxHp * 0.3 ? WOUND : INK, display: "flex", alignItems: "center", gap: "6px" }}>
+            <PixelSprite src={heartIcon} alt="" size={18} /> HP {character.hp} / {characterEffStats.maxHp}
           </div>
           <div style={{ marginTop: "4px" }}>
             <StatBar value={character.hp} max={characterEffStats.maxHp} color={character.hp <= characterEffStats.maxHp * 0.3 ? WOUND : BLOOD} />
           </div>
-          <div style={{ marginTop: "8px", color: SLATE, fontSize: "11px" }}>
-            XP {character.xp} / {xpToNextLevel(character.level)} · ATK {characterEffStats.atk} · DEF {characterEffStats.def}
+          <div style={{ marginTop: "8px", color: SLATE, fontSize: "11px", display: "flex", alignItems: "center", gap: "5px", flexWrap: "wrap" }}>
+            XP {character.xp} / {xpToNextLevel(character.level)} · ATK {characterEffStats.atk} · <PixelSprite src={shieldIcon} alt="" size={16} /> DEF {characterEffStats.def}
           </div>
           <div style={{ marginTop: "2px", color: SLATE, fontSize: "11px" }}>
             Crit {characterEffStats.critChance.toFixed(0)}% · Dodge {characterEffStats.dodgeChance.toFixed(0)}%
@@ -2503,7 +2562,7 @@ export default function DMMemoryTest() {
         </LedgerSection>
 
         <LedgerSection title="Gold">
-          <div style={{ color: AMBER }}>{character.gold}g</div>
+          <div style={{ color: AMBER, display: "flex", alignItems: "center", gap: "6px" }}><PixelSprite src={coinIcon} alt="" size={20} /> {character.gold}g</div>
         </LedgerSection>
 
         <LedgerSection title="Equipped">
@@ -2511,9 +2570,12 @@ export default function DMMemoryTest() {
             const equippedItem = character.equipped?.[slot];
             const def = equippedItem ? EQUIPMENT_TABLE[equippedItem.equipmentKey] : null;
             const rarity = equippedItem ? RARITY_TIERS[rarityOf(equippedItem)] : null;
+            const itemSprite = equippedItem ? EQUIPMENT_SPRITES[equippedItem.equipmentKey] : null;
             return (
               <div key={slot} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", marginBottom: "4px" }}>
-                <div style={{ minWidth: 0, textTransform: "capitalize" }}>
+                <div style={{ minWidth: 0, textTransform: "capitalize", display: "flex", alignItems: "center", gap: "6px" }}>
+                  {itemSprite && <PixelSprite src={itemSprite} alt="" size={28} style={{ flexShrink: 0 }} />}
+                  <div>
                   <span style={{ color: equippedItem ? SLATE : DIM }}>{slot}: </span>
                   <span style={{ color: equippedItem ? rarity.color : DIM }}>{equippedItem ? equippedItem.name : "none"}</span>
                   {equippedItem && rarity.label !== "Common" && <span style={{ color: rarity.color, fontSize: "10px", marginLeft: "5px" }}>({rarity.label})</span>}
@@ -2522,6 +2584,7 @@ export default function DMMemoryTest() {
                       (+{Math.round((slot === "weapon" ? def.atkBonus : def.defBonus) * rarity.statMult)} {slot === "weapon" ? "ATK" : "DEF"})
                     </span>
                   )}
+                  </div>
                 </div>
                 {equippedItem && (
                   <button
@@ -2555,7 +2618,7 @@ export default function DMMemoryTest() {
               const equipDef = EQUIPMENT_TABLE[item.equipmentKey];
               const rarity = RARITY_TIERS[rarityOf(item)];
               const nameColor = rarity.color;
-              const itemSprite = isConsumable ? "/sprites/potion.svg" : equipDef?.slot === "weapon" ? "/sprites/sword.svg" : null;
+              const itemSprite = isConsumable ? healingPotionIcon : EQUIPMENT_SPRITES[item.equipmentKey];
               return (
                 <div key={item.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", marginBottom: "6px" }}>
                   <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: "6px" }}>
@@ -2592,7 +2655,7 @@ export default function DMMemoryTest() {
           )}
         </LedgerSection>
 
-        <LedgerSection title={`Quests (${quests.length})`}>
+        <LedgerSection title={<span style={{ display: "flex", alignItems: "center", gap: "6px" }}><PixelSprite src={scrollIcon} alt="" size={18} /> Quests ({quests.length})</span>}>
           {quests.length === 0 ? (
             <div style={{ color: DIM }}>none yet</div>
           ) : (
@@ -2838,7 +2901,7 @@ function CharacterCreationScreen({ mode, onSubmit }) {
           <div style={{ marginBottom: "22px" }}>
             {fieldLabel("Starting Weapon")}
             <div style={{ display: "flex", gap: "12px", alignItems: "center", flexWrap: "wrap" }}>
-              <PixelSprite src="/sprites/sword.svg" alt="Starting weapon" size={82} style={{ background: "#0e0c09", border: "1px solid #33291D" }} />
+              <PixelSprite src={EQUIPMENT_SPRITES[STARTING_WEAPON_OPTIONS[weapon].equipmentKey]} alt={`${STARTING_WEAPON_OPTIONS[weapon].label} icon`} size={82} style={{ background: "#0e0c09", border: "1px solid #33291D" }} />
               <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", flex: 1 }}>
                 {Object.entries(STARTING_WEAPON_OPTIONS).map(([key, w]) => pillButton(key, w.label, weapon === key, () => setWeapon(key)))}
               </div>
