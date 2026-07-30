@@ -277,6 +277,76 @@ const RACE_OPTIONS = [
   { key: "tiefling", label: "Tiefling", flavor: "Marked by an otherworldly heritage, tieflings are used to being stared at first and judged second." },
 ];
 
+// ---- Fixed world canon. These ids, routes, cultures, and danger tiers exist before
+// character creation and are never authored by the narrator. loc_1 deliberately remains
+// Barrow's Cross so saves and story content which already point at it continue to resolve.
+const WORLD_MAP = {
+  loc_1: { id: "loc_1", name: "Barrow's Cross", regionId: "heartlands", type: "settlement", dangerTier: "common", connections: ["vaelcrest", "amberfield", "ironwatch", "bleeding_field", "weeping_vale"] },
+  vaelcrest: { id: "vaelcrest", name: "Vaelcrest", regionId: "heartlands", type: "settlement", dangerTier: "common", connections: ["loc_1", "amberfield", "ironwatch", "bleeding_field", "weeping_vale", "ironhold", "sernwood"] },
+  amberfield: { id: "amberfield", name: "Amberfield", regionId: "heartlands", type: "settlement", dangerTier: "common", connections: ["loc_1", "vaelcrest", "ironwatch", "bleeding_field"] },
+  ironwatch: { id: "ironwatch", name: "Ironwatch", regionId: "heartlands", type: "settlement", dangerTier: "common", connections: ["loc_1", "vaelcrest", "amberfield", "weeping_vale"] },
+  bleeding_field: { id: "bleeding_field", name: "The Bleeding Field", regionId: "heartlands", type: "point_of_interest", dangerTier: "uncommon", connections: ["loc_1", "vaelcrest", "amberfield"] },
+  weeping_vale: { id: "weeping_vale", name: "The Weeping Vale", regionId: "heartlands", type: "point_of_interest", dangerTier: "rare", connections: ["loc_1", "vaelcrest", "ironwatch"] },
+  ironhold: { id: "ironhold", name: "Ironhold", regionId: "mountains", type: "settlement", dangerTier: "common", connections: ["emberhearth", "deep_warrens", "hollow_vein", "skarrow_peak", "vaelcrest", "ashkavars_rest"] },
+  emberhearth: { id: "emberhearth", name: "Emberhearth", regionId: "mountains", type: "settlement", dangerTier: "common", connections: ["ironhold", "deep_warrens", "hollow_vein", "skarrow_peak"] },
+  deep_warrens: { id: "deep_warrens", name: "The Deep Warrens", regionId: "mountains", type: "point_of_interest", dangerTier: "uncommon", connections: ["ironhold", "emberhearth"] },
+  hollow_vein: { id: "hollow_vein", name: "The Hollow Vein", regionId: "mountains", type: "point_of_interest", dangerTier: "rare", connections: ["ironhold", "emberhearth", "skarrow_peak"] },
+  skarrow_peak: { id: "skarrow_peak", name: "Skarrow Peak", regionId: "mountains", type: "point_of_interest", dangerTier: "epic", connections: ["ironhold", "emberhearth", "hollow_vein"] },
+  ashkavars_rest: { id: "ashkavars_rest", name: "Ashkavar's Rest", regionId: "desert", type: "settlement", dangerTier: "common", connections: ["sunspire_court", "duskmarket", "palms_rest", "glasswastes", "glass_cathedral", "ironhold", "mireholt"] },
+  sunspire_court: { id: "sunspire_court", name: "Sunspire Court", regionId: "desert", type: "settlement", dangerTier: "common", connections: ["ashkavars_rest", "duskmarket", "palms_rest", "glasswastes", "glass_cathedral"] },
+  duskmarket: { id: "duskmarket", name: "Duskmarket", regionId: "desert", type: "settlement", dangerTier: "uncommon", connections: ["ashkavars_rest", "sunspire_court", "palms_rest", "glasswastes"] },
+  palms_rest: { id: "palms_rest", name: "Palm's Rest", regionId: "desert", type: "point_of_interest", dangerTier: "common", connections: ["ashkavars_rest", "sunspire_court", "duskmarket"] },
+  glasswastes: { id: "glasswastes", name: "The Glasswastes", regionId: "desert", type: "point_of_interest", dangerTier: "rare", connections: ["ashkavars_rest", "sunspire_court", "duskmarket", "glass_cathedral"] },
+  glass_cathedral: { id: "glass_cathedral", name: "The Glass Cathedral", regionId: "desert", type: "point_of_interest", dangerTier: "legendary", connections: ["ashkavars_rest", "sunspire_court", "glasswastes"] },
+  mireholt: { id: "mireholt", name: "Mireholt", regionId: "swamp", type: "settlement", dangerTier: "common", connections: ["thornback_hold", "gravewater_vigil", "drowned_choir", "ashkavars_rest", "saltmere"] },
+  thornback_hold: { id: "thornback_hold", name: "Thornback Hold", regionId: "swamp", type: "settlement", dangerTier: "common", connections: ["mireholt", "gravewater_vigil", "drowned_choir"] },
+  gravewater_vigil: { id: "gravewater_vigil", name: "Gravewater Vigil", regionId: "swamp", type: "settlement", dangerTier: "uncommon", connections: ["mireholt", "thornback_hold", "drowned_choir"] },
+  drowned_choir: { id: "drowned_choir", name: "The Drowned Choir", regionId: "swamp", type: "point_of_interest", dangerTier: "epic", connections: ["mireholt", "thornback_hold", "gravewater_vigil"] },
+  sernwood: { id: "sernwood", name: "Sernwood", regionId: "heavy_forest", type: "settlement", dangerTier: "common", connections: ["silverbough", "elderglass_grove", "fallen_spire", "hollow_root", "vaelcrest", "drakes_hollow"] },
+  silverbough: { id: "silverbough", name: "Silverbough", regionId: "heavy_forest", type: "settlement", dangerTier: "common", connections: ["sernwood", "elderglass_grove", "fallen_spire", "hollow_root"] },
+  elderglass_grove: { id: "elderglass_grove", name: "The Elderglass Grove", regionId: "heavy_forest", type: "point_of_interest", dangerTier: "rare", connections: ["sernwood", "silverbough"] },
+  fallen_spire: { id: "fallen_spire", name: "The Fallen Spire", regionId: "heavy_forest", type: "point_of_interest", dangerTier: "epic", connections: ["sernwood", "silverbough", "hollow_root"] },
+  hollow_root: { id: "hollow_root", name: "The Hollow Root", regionId: "heavy_forest", type: "point_of_interest", dangerTier: "legendary", connections: ["sernwood", "silverbough", "fallen_spire"] },
+  saltmere: { id: "saltmere", name: "Saltmere", regionId: "coast", type: "settlement", dangerTier: "common", connections: ["tidewatch", "duskhaven", "widows_shoals", "last_lantern", "mireholt", "drakes_hollow"] },
+  tidewatch: { id: "tidewatch", name: "Tidewatch", regionId: "coast", type: "settlement", dangerTier: "common", connections: ["saltmere", "duskhaven", "widows_shoals", "last_lantern"] },
+  duskhaven: { id: "duskhaven", name: "Duskhaven", regionId: "coast", type: "settlement", dangerTier: "uncommon", connections: ["saltmere", "tidewatch", "widows_shoals", "last_lantern"] },
+  widows_shoals: { id: "widows_shoals", name: "The Widow's Shoals", regionId: "coast", type: "point_of_interest", dangerTier: "uncommon", connections: ["saltmere", "tidewatch", "duskhaven"] },
+  last_lantern: { id: "last_lantern", name: "The Last Lantern", regionId: "coast", type: "point_of_interest", dangerTier: "rare", connections: ["saltmere", "tidewatch", "duskhaven"] },
+  drakes_hollow: { id: "drakes_hollow", name: "Drake's Hollow", regionId: "tundra", type: "settlement", dangerTier: "common", connections: ["ashgrim_hold", "wintermeres_landing", "rimefall_vault", "long_ice", "saltmere", "sernwood"] },
+  ashgrim_hold: { id: "ashgrim_hold", name: "Ashgrim Hold", regionId: "tundra", type: "settlement", dangerTier: "common", connections: ["drakes_hollow", "wintermeres_landing", "rimefall_vault", "long_ice"] },
+  wintermeres_landing: { id: "wintermeres_landing", name: "Wintermere's Landing", regionId: "tundra", type: "settlement", dangerTier: "common", connections: ["drakes_hollow", "ashgrim_hold", "rimefall_vault", "long_ice"] },
+  rimefall_vault: { id: "rimefall_vault", name: "The Rimefall Vault", regionId: "tundra", type: "point_of_interest", dangerTier: "epic", connections: ["drakes_hollow", "ashgrim_hold", "wintermeres_landing"] },
+  long_ice: { id: "long_ice", name: "The Long Ice", regionId: "tundra", type: "point_of_interest", dangerTier: "legendary", connections: ["drakes_hollow", "ashgrim_hold", "wintermeres_landing"] },
+};
+
+const REGIONS_TABLE = {
+  heavy_forest: { displayName: "Forest", dominantRace: "elf", hubSettlement: "sernwood", passiveAbility: { key: "wilderness_step", description: "You move quietly and read a trail well — small edge to stealth and tracking in the wild." } },
+  desert: { displayName: "Desert", dominantRace: "tiefling", hubSettlement: "ashkavars_rest", passiveAbility: { key: "sun_born", description: "Heat rarely slows you down, and traders in the sun-scoured lands deal with you a little more fairly." } },
+  swamp: { displayName: "Swamp", dominantRace: "orc", hubSettlement: "mireholt", passiveAbility: { key: "hardened_constitution", description: "Poison and disease take noticeably less of a toll on you than most." } },
+  mountains: { displayName: "Mountains", dominantRace: "dwarf", hubSettlement: "ironhold", passiveAbility: { key: "guild_rates", description: "Smiths and guild traders give you a modest discount — you know real craft when you see it." } },
+  heartlands: { displayName: "Heartlands", dominantRace: "human_south", hubSettlement: "loc_1", passiveAbility: { key: "noble_reception", description: "Nobles and officials extend you a little more courtesy than a stranger usually gets." } },
+  coast: { displayName: "Coast", dominantRace: "halfling", hubSettlement: "saltmere", passiveAbility: { key: "sailor_trade", description: "Sailors and dockhands treat you like one of their own, and you swim/handle boats with ease." } },
+  tundra: { displayName: "Tundra", dominantRace: "human_north", hubSettlement: "drakes_hollow", passiveAbility: { key: "cold_resistance", description: "Cold that would slow most people barely touches you." } },
+};
+
+// The design request supplied only this placeholder, not the promised faction prose.
+// Preserve it verbatim rather than inventing leaders or rivalries and presenting them as canon.
+const FACTIONS_TABLE = Object.fromEntries(Object.keys(REGIONS_TABLE).map((regionId) => [regionId, {
+  rulingBodies: [], rivalry: null, wildcard: null,
+  canonicalReference: "[PASTE: the Heartlands/Mountains/Desert/Swamp/Forest/Coast/Tundra faction, leader, rivalry, and wildcard text from our design conversation here]",
+}]));
+
+function cloneWorldMap() {
+  return Object.fromEntries(Object.entries(WORLD_MAP).map(([id, location]) => [id, { ...location, connections: [...location.connections] }]));
+}
+
+function rollStartingRegion(race, random = Math.random()) {
+  const matches = race === "human" ? ["heartlands", "tundra"] : Object.keys(REGIONS_TABLE).filter((id) => REGIONS_TABLE[id].dominantRace === race);
+  const others = Object.keys(REGIONS_TABLE).filter((id) => !matches.includes(id));
+  if (random < 0.55) return matches[Math.min(matches.length - 1, Math.floor((random / 0.55) * matches.length))];
+  return others[Math.min(others.length - 1, Math.floor(((random - 0.55) / 0.45) * others.length))];
+}
+
 // Archetype grants a ONE-TIME starting attribute bump at character creation — nothing
 // more. It never locks anything: every ability in ABILITY_TABLE stays reachable by
 // anyone regardless of what they picked here, since abilities only ever check the
@@ -541,7 +611,7 @@ const initialCharacter = {
 // deliberately NOT an AI call. The very first thing a new player sees shouldn't depend
 // on the AI bridge being up; every turn after this one already goes through Claude, but
 // this one guaranteed to work is worth more than a fancier version that might not load.
-function craftOpeningNarration(identity) {
+function craftOpeningNarration(identity, startingRegion = "heartlands") {
   const race = RACE_OPTIONS.find((r) => r.key === identity.race) || RACE_OPTIONS[0];
   const background = BACKGROUND_OPTIONS[identity.background] || BACKGROUND_OPTIONS.farmer;
   const weapon = STARTING_WEAPON_OPTIONS[identity.weapon] || STARTING_WEAPON_OPTIONS.dagger;
@@ -549,9 +619,13 @@ function craftOpeningNarration(identity) {
     ? identity.backstory.trim()
     : "Whatever brought you here, you've kept it to yourself.";
   const appearanceLine = identity.appearance && identity.appearance.trim() ? ` ${identity.appearance.trim()}` : "";
+  const locationName = WORLD_MAP[REGIONS_TABLE[startingRegion].hubSettlement].name;
+  const narration = startingRegion === "heartlands"
+    ? `Rain taps the shutters of the Crossroads Inn. ${identity.name}, a ${race.label.toLowerCase()} formerly a ${background.label.toLowerCase()}, has just arrived in Millbrook, a farming village that smells of woodsmoke and wet hay, a ${weapon.name.toLowerCase()} at your side.${appearanceLine} ${backstoryLine} The innkeeper eyes you — a stranger — while three locals mutter over their ale in the corner.`
+    : `${identity.name}, a ${race.label.toLowerCase()} formerly a ${background.label.toLowerCase()}, begins this road in ${locationName}, the hub of the ${REGIONS_TABLE[startingRegion].displayName.toLowerCase()}, a ${weapon.name.toLowerCase()} at your side.${appearanceLine} ${backstoryLine}`;
   return {
     role: "dm",
-    narration: `Rain taps the shutters of the Crossroads Inn. ${identity.name}, a ${race.label.toLowerCase()} formerly a ${background.label.toLowerCase()}, has just arrived in Millbrook, a farming village that smells of woodsmoke and wet hay, a ${weapon.name.toLowerCase()} at your side.${appearanceLine} ${backstoryLine} The innkeeper eyes you — a stranger — while three locals mutter over their ale in the corner.`,
+    narration,
     suggestedActions: ["Talk to the innkeeper", "Approach the locals in the corner", "Ask about work in the village"],
   };
 }
@@ -622,12 +696,7 @@ const TUTORIAL_STEPS = [
 const initialWorldState = {
   day: 1,
   locationId: "loc_1",
-  // Locations are graph nodes now, not flat strings: { name, connections: [otherLocationIds] }.
-  // The graph isn't hand-authored — it builds itself from actual travel. Whenever the
-  // player's location changes, code links the old and new location bidirectionally,
-  // so the map always reflects real established routes rather than a fixed layout that
-  // would fight against how Claude introduces places dynamically during play.
-  locations: { loc_1: { name: "The Crossroads Inn, edge of Millbrook village", connections: [] } },
+  locations: cloneWorldMap(),
   npcs: [],
   reputation: "Unknown — a stranger passing through",
   worldFacts: [],
@@ -685,6 +754,11 @@ function addXp(character, amount) {
 
 const EXPLORATION_SYSTEM_PROMPT = `You are the narrator for a fantasy RPG. You do NOT control game numbers — HP, gold amounts, XP, and combat math are all handled by game code, not you. Your job is narration and deciding WHAT happens qualitatively, never how much.
 
+FIXED WORLD CANON (never rename, relocate, replace, or contradict it):
+REGIONS: ${JSON.stringify(REGIONS_TABLE)}
+WORLD MAP: ${JSON.stringify(WORLD_MAP)}
+FACTIONS: ${JSON.stringify(FACTIONS_TABLE)}
+
 You'll receive the current WORLD STATE, CHARACTER SUMMARY (level/rough HP status/inventory/active quests/notable traits — for narrative color only), and the player's action.
 
 If CHARACTER SUMMARY includes "notableTraits" (e.g. "Strength: Skilled"), feel free to let those color your narration when relevant — a strong character might force a door, a perceptive one might notice something others miss — but never state the underlying number, and never let a trait's absence mean the player categorically fails at something; these are flavor, not hard gates. The same goes for "narrativeAbilities" (e.g. "Keen Analysis: You notice details others miss") — weave them in when they fit the scene, but they're color, not permission or denial for anything mechanical.
@@ -725,7 +799,7 @@ Respond with ONLY valid JSON, no markdown fences, no preamble:
   "suggestedActions": ["string", "string", "string"]
 }
 
-For "location": use null if unchanged; {"existingId": "loc_2"} to move to an already-known place from WORLD STATE.locations; or {"newDisplayName": "string"} to introduce a brand-new place — code will assign it an id.
+For "location": use null if unchanged or {"existingId": "exact id"} for every real named settlement or point of interest in WORLD MAP. The rare {"newDisplayName": "string"} path is reserved only for minor, disposable, scene-specific flavor spots such as a particular room, back alley, or campsite. Never use newDisplayName to create a settlement, landmark, dungeon, or persistent travel destination, and never use it for a named WORLD MAP place.
 
 Each entry in WORLD STATE.locations has a "connections" array — the other location ids directly reachable from it based on where the player has actually traveled before. Moving to a location already listed in the current location's connections is a short, ordinary trip — narrate it briefly. Moving to a known location that ISN'T in the current connections (somewhere the player has heard of but never traveled to directly from here) should read like a real journey — time passing, distance covered — rather than an instant unexplained jump, even though it's still a single action. Code will automatically treat any move as establishing a new direct route between the two places, so once you've narrated that journey once, future trips between them can be brief.
 
@@ -1175,6 +1249,8 @@ function characterSummaryForPrompt(character, quests) {
     appearance: character.identity?.appearance || null,
     voice: character.identity?.voice || null,
     backstory: character.identity?.backstory || null,
+    startingRegion: character.startingRegion || null,
+    regionalPassive: character.regionalPassive || null,
     level: character.level,
     condition: hpStatus,
     trainingStatus: (character.dailyTrainingUsed || 0) >= (character.dailyTrainingCap || DAILY_TRAINING_CAP) ? "worn out for today" : "able to train today",
@@ -1204,7 +1280,7 @@ export default function DMMemoryTest() {
   // trigger a render. Code is the only thing that ever assigns an id; Claude only ever
   // receives and echoes them back (for npc/location ids) or never sees them at all (items).
   const nextNpcIdRef = useRef(1);
-  const nextLocationIdRef = useRef(2); // loc_1 is already taken by initialWorldState
+  const nextLocationIdRef = useRef(1); // disposable flavor locations use flavor_loc_N
   const nextItemIdRef = useRef(3); // item_1 and item_2 are already taken by initialCharacter
   const [log, setLog] = useState(INITIAL_LOG);
   const [saveChecked, setSaveChecked] = useState(false);
@@ -1267,9 +1343,13 @@ export default function DMMemoryTest() {
       // reconstruct real travel history retroactively, so the graph simply starts
       // sparse for that save and builds forward from here, same principle as the
       // other migrations above.
-      const migratedLocations = {};
+      const migratedLocations = cloneWorldMap();
       Object.entries(saved.worldState.locations || {}).forEach(([id, value]) => {
-        migratedLocations[id] = typeof value === "string" ? { name: value, connections: [] } : { connections: [], ...value };
+        const savedLocation = typeof value === "string" ? { name: value, connections: [] } : { connections: [], ...value };
+        const canonical = WORLD_MAP[id];
+        migratedLocations[id] = canonical
+          ? { ...savedLocation, ...canonical, connections: [...new Set([...canonical.connections, ...(savedLocation.connections || [])])] }
+          : savedLocation;
       });
       const migratedNpcs = (saved.worldState.npcs || []).map((npc) => ({
         ...npc,
@@ -1306,6 +1386,9 @@ export default function DMMemoryTest() {
           ? saved.character.pendingLevelUps * ATTRIBUTE_POINTS_PER_LEVEL
           : 0;
       const { attack: _oldAttack, defense: _oldDefense, maxHp: _oldMaxHp, pendingLevelUps: _oldPending, ...restOfSavedCharacter } = saved.character;
+      const inferredStartingRegion = saved.character.startingRegion
+        || WORLD_MAP[saved.worldState?.locationId]?.regionId
+        || "heartlands";
       setCharacter({
         equipped: { weapon: null, armor: null },
         injuries: [],
@@ -1315,6 +1398,8 @@ export default function DMMemoryTest() {
         bankedSkillPoints: saved.character.bankedSkillPoints ?? migratedPendingPoints,
         dailyTrainingUsed: saved.character.dailyTrainingUsed ?? 0,
         dailyTrainingCap: saved.character.dailyTrainingCap ?? DAILY_TRAINING_CAP,
+        startingRegion: inferredStartingRegion,
+        regionalPassive: saved.character.regionalPassive || { ...REGIONS_TABLE[inferredStartingRegion].passiveAbility },
         ...restOfSavedCharacter,
         attributes: migratedAttributes,
         inventory: migratedInventory,
@@ -1498,7 +1583,7 @@ export default function DMMemoryTest() {
     setPendingPurchase(null);
     setLog(INITIAL_LOG);
     nextNpcIdRef.current = 1;
-    nextLocationIdRef.current = 2;
+    nextLocationIdRef.current = 1;
     nextItemIdRef.current = 3;
     setLastSavedAt(null);
     setConfirmingNewGame(false);
@@ -1535,6 +1620,9 @@ export default function DMMemoryTest() {
 
   function submitIdentity(identity) {
     if (identityMode === "new") {
+      const startingRegion = rollStartingRegion(identity.race);
+      const regionalPassive = { ...REGIONS_TABLE[startingRegion].passiveAbility };
+      const identityWithRegion = { ...identity, startingRegion, regionalPassive };
       const background = BACKGROUND_OPTIONS[identity.background] || BACKGROUND_OPTIONS.farmer;
       const startingAttributes = { ...initialAttributes };
       Object.entries(background.bonus).forEach(([key, amount]) => {
@@ -1542,8 +1630,9 @@ export default function DMMemoryTest() {
       });
       const startingGold = 10 + (background.startingGold || 0);
       const startingInventory = buildStartingInventory(identity.weapon, identity.background);
-      setCharacter({ ...initialCharacter, attributes: startingAttributes, gold: startingGold, inventory: startingInventory, identity });
-      setLog([craftOpeningNarration(identity)]);
+      setCharacter({ ...initialCharacter, attributes: startingAttributes, gold: startingGold, inventory: startingInventory, identity: identityWithRegion, startingRegion, regionalPassive });
+      setWorldState((world) => ({ ...world, locationId: REGIONS_TABLE[startingRegion].hubSettlement, locations: cloneWorldMap() }));
+      setLog([craftOpeningNarration(identityWithRegion, startingRegion)]);
     } else {
       setCharacter((c) => ({ ...c, identity }));
       pushSystemLine(`✎ ${identity.name} — the story continues.`);
@@ -2058,8 +2147,8 @@ export default function DMMemoryTest() {
             pushSystemLine(`⚠ location referenced existingId "${locUpdate.existingId}" which isn't registered — ignored, location unchanged.`);
           }
         } else if (locUpdate && locUpdate.newDisplayName) {
-          const newId = `loc_${nextLocationIdRef.current++}`;
-          next.locations[newId] = { name: locUpdate.newDisplayName, connections: [] };
+          const newId = `flavor_loc_${nextLocationIdRef.current++}`;
+          next.locations[newId] = { id: newId, name: locUpdate.newDisplayName, regionId: next.locations[prevLocationId]?.regionId || null, type: "scene", dangerTier: "common", connections: [] };
           next.locationId = newId;
         }
         // Whenever the location actually changed this turn, the old and new place are
@@ -2617,6 +2706,11 @@ export default function DMMemoryTest() {
               </div>
             </div>
             {character.identity.voice && <div style={{ color: SLATE, fontSize: "11px", marginTop: "2px" }}>Voice: {character.identity.voice}</div>}
+            {character.regionalPassive && (
+              <div style={{ color: CODE_VOICE, fontSize: "11px", marginTop: "7px", lineHeight: 1.5 }}>
+                Regional Passive — {character.regionalPassive.key}: {character.regionalPassive.description}
+              </div>
+            )}
             {character.identity.appearance && (
               <div style={{ color: SLATE, fontSize: "11px", marginTop: "6px", lineHeight: 1.5 }}>{character.identity.appearance}</div>
             )}
