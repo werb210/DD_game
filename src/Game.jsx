@@ -336,8 +336,36 @@ const FACTIONS_TABLE = Object.fromEntries(Object.keys(REGIONS_TABLE).map((region
   canonicalReference: "[PASTE: the Heartlands/Mountains/Desert/Swamp/Forest/Coast/Tundra faction, leader, rivalry, and wildcard text from our design conversation here]",
 }]));
 
-function cloneWorldMap() {
-  return Object.fromEntries(Object.entries(WORLD_MAP).map(([id, location]) => [id, { ...location, connections: [...location.connections] }]));
+function cloneWorldMap(startingLocationId = null) {
+  const locations = Object.fromEntries(Object.entries(WORLD_MAP).map(([id, location]) => [id, {
+    ...location,
+    connections: [...location.connections],
+    discovered: false,
+    visited: false,
+  }]));
+  if (startingLocationId && locations[startingLocationId]) {
+    locations[startingLocationId].discovered = true;
+    locations[startingLocationId].visited = true;
+    locations[startingLocationId].connections.forEach((id) => {
+      if (locations[id]) locations[id].discovered = true;
+    });
+  }
+  return locations;
+}
+
+function locationDisplayName(location) {
+  if (!location?.visited && !location?.hintedName) return "Unknown path";
+  return location.hintedName || location.name;
+}
+
+function revealArrival(locations, locationId) {
+  const arrived = locations[locationId];
+  if (!arrived) return;
+  arrived.discovered = true;
+  arrived.visited = true;
+  arrived.connections.forEach((id) => {
+    if (locations[id] && !locations[id].discovered) locations[id].discovered = true;
+  });
 }
 
 function rollStartingRegion(race, random = Math.random()) {
@@ -696,7 +724,7 @@ const TUTORIAL_STEPS = [
 const initialWorldState = {
   day: 1,
   locationId: "loc_1",
-  locations: cloneWorldMap(),
+  locations: cloneWorldMap("loc_1"),
   npcs: [],
   reputation: "Unknown — a stranger passing through",
   worldFacts: [],
@@ -794,12 +822,15 @@ Respond with ONLY valid JSON, no markdown fences, no preamble:
     {"type": "npc_relationship", "id": "string — exact existing npc id from WORLD STATE", "interaction": "helped|betrayed|threatened|impressed|protected|insulted|spared|smallKindness|smallSlight"},
     {"type": "shop_open", "id": "string — exact existing npc id from WORLD STATE", "merchantType": "general_store|blacksmith|apothecary|fence"}
     ,{"type": "training_offer", "id": "exact existing trainer npc id", "stat": "STR|DEX|CON|INT|WIS|CHA"}
+    ,{"type": "location_hint", "existingId": "exact WORLD MAP location id"}
     ,{"type": "day_advance", "reason": "short description of the sleep or time skip"}
   ],
   "suggestedActions": ["string", "string", "string"]
 }
 
 For "location": use null if unchanged or {"existingId": "exact id"} for every real named settlement or point of interest in WORLD MAP. The rare {"newDisplayName": "string"} path is reserved only for minor, disposable, scene-specific flavor spots such as a particular room, back alley, or campsite. Never use newDisplayName to create a settlement, landmark, dungeon, or persistent travel destination, and never use it for a named WORLD MAP place.
+
+Emit location_hint only when the fiction clearly gives the player a real, actionable lead to a WORLD MAP place: an NPC names a destination, gives clear directions, or marks it on a map. Use its exact existingId. Do NOT emit it for passing references, distant lore, or vague world-flavor mentions that do not tell the player where they could actually go.
 
 Each entry in WORLD STATE.locations has a "connections" array — the other location ids directly reachable from it based on where the player has actually traveled before. Moving to a location already listed in the current location's connections is a short, ordinary trip — narrate it briefly. Moving to a known location that ISN'T in the current connections (somewhere the player has heard of but never traveled to directly from here) should read like a real journey — time passing, distance covered — rather than an instant unexplained jump, even though it's still a single action. Code will automatically treat any move as establishing a new direct route between the two places, so once you've narrated that journey once, future trips between them can be brief.
 
@@ -1343,14 +1374,16 @@ export default function DMMemoryTest() {
       // reconstruct real travel history retroactively, so the graph simply starts
       // sparse for that save and builds forward from here, same principle as the
       // other migrations above.
-      const migratedLocations = cloneWorldMap();
+      const savedLocationId = saved.worldState.locationId || "loc_1";
+      const migratedLocations = cloneWorldMap(savedLocationId);
       Object.entries(saved.worldState.locations || {}).forEach(([id, value]) => {
         const savedLocation = typeof value === "string" ? { name: value, connections: [] } : { connections: [], ...value };
         const canonical = WORLD_MAP[id];
         migratedLocations[id] = canonical
-          ? { ...savedLocation, ...canonical, connections: [...new Set([...canonical.connections, ...(savedLocation.connections || [])])] }
-          : savedLocation;
+          ? { ...migratedLocations[id], ...savedLocation, ...canonical, connections: [...new Set([...canonical.connections, ...(savedLocation.connections || [])])] }
+          : { ...savedLocation, discovered: savedLocation.discovered ?? true, visited: savedLocation.visited ?? true };
       });
+      revealArrival(migratedLocations, savedLocationId);
       const migratedNpcs = (saved.worldState.npcs || []).map((npc) => ({
         ...npc,
         isTrainer: !!npc.isTrainer,
@@ -1631,7 +1664,8 @@ export default function DMMemoryTest() {
       const startingGold = 10 + (background.startingGold || 0);
       const startingInventory = buildStartingInventory(identity.weapon, identity.background);
       setCharacter({ ...initialCharacter, attributes: startingAttributes, gold: startingGold, inventory: startingInventory, identity: identityWithRegion, startingRegion, regionalPassive });
-      setWorldState((world) => ({ ...world, locationId: REGIONS_TABLE[startingRegion].hubSettlement, locations: cloneWorldMap() }));
+      const startingLocationId = REGIONS_TABLE[startingRegion].hubSettlement;
+      setWorldState((world) => ({ ...world, day: 1, locationId: startingLocationId, locations: cloneWorldMap(startingLocationId) }));
       setLog([craftOpeningNarration(identityWithRegion, startingRegion)]);
     } else {
       setCharacter((c) => ({ ...c, identity }));
@@ -2051,6 +2085,18 @@ export default function DMMemoryTest() {
         } else {
           setTrainingOffer({ npcId: trainer.id, stat });
         }
+      } else if (event.type === "location_hint") {
+        setWorldState((prev) => {
+          const location = prev.locations[event.existingId];
+          if (!location || !WORLD_MAP[event.existingId]) return prev;
+          return {
+            ...prev,
+            locations: {
+              ...prev.locations,
+              [event.existingId]: { ...location, discovered: true, hintedName: WORLD_MAP[event.existingId].name },
+            },
+          };
+        });
       } else if (event.type === "day_advance") {
         setWorldState((prev) => ({ ...prev, day: (prev.day || 1) + 1 }));
         setCharacter((prev) => ({ ...prev, dailyTrainingUsed: 0, injuries: (prev.injuries || []).slice(1) }));
@@ -2129,8 +2175,9 @@ export default function DMMemoryTest() {
 
       setWorldState((prev) => {
         const next = {
+          day: prev.day || 1,
           locationId: prev.locationId,
-          locations: { ...prev.locations },
+          locations: Object.fromEntries(Object.entries(prev.locations).map(([id, location]) => [id, { ...location, connections: [...(location.connections || [])] }])),
           npcs: [...prev.npcs],
           reputation: stateUpdates.reputationDelta ? `${prev.reputation} → ${stateUpdates.reputationDelta}` : prev.reputation,
           worldFacts: [...prev.worldFacts, ...(stateUpdates.worldFacts || [])],
@@ -2142,13 +2189,17 @@ export default function DMMemoryTest() {
         const locUpdate = stateUpdates.location;
         if (locUpdate && locUpdate.existingId) {
           if (next.locations[locUpdate.existingId]) {
-            next.locationId = locUpdate.existingId;
+            if (next.locations[locUpdate.existingId].discovered || locUpdate.existingId === prevLocationId) {
+              next.locationId = locUpdate.existingId;
+            } else {
+              pushSystemLine(`⚠ You don't know a route to that location yet.`);
+            }
           } else {
             pushSystemLine(`⚠ location referenced existingId "${locUpdate.existingId}" which isn't registered — ignored, location unchanged.`);
           }
         } else if (locUpdate && locUpdate.newDisplayName) {
           const newId = `flavor_loc_${nextLocationIdRef.current++}`;
-          next.locations[newId] = { id: newId, name: locUpdate.newDisplayName, regionId: next.locations[prevLocationId]?.regionId || null, type: "scene", dangerTier: "common", connections: [] };
+          next.locations[newId] = { id: newId, name: locUpdate.newDisplayName, regionId: next.locations[prevLocationId]?.regionId || null, type: "scene", dangerTier: "common", connections: [], discovered: true, visited: true };
           next.locationId = newId;
         }
         // Whenever the location actually changed this turn, the old and new place are
@@ -2157,6 +2208,17 @@ export default function DMMemoryTest() {
         // the map graph builds itself purely from what actually happened in play.
         if (next.locationId !== prevLocationId) {
           linkLocations(next.locations, prevLocationId, next.locationId);
+          revealArrival(next.locations, next.locationId);
+          if (WORLD_MAP[next.locationId]) {
+            const destination = next.locations[next.locationId];
+            const days = next.locations[prevLocationId]?.regionId === destination.regionId ? 1 : 3;
+            next.day += days;
+            setCharacter((current) => ({ ...current, dailyTrainingUsed: 0 }));
+            setTrainingOffer(null);
+            pushSystemLine(days === 1
+              ? `→ A day passes reaching ${destination.name}.`
+              : `→ Three days pass on the road to ${destination.name}.`);
+          }
         }
 
         (stateUpdates.newNPCs || []).forEach((npc) => {
@@ -2423,7 +2485,7 @@ export default function DMMemoryTest() {
         <MapPanel
           worldState={worldState}
           onClose={() => setMapOpen(false)}
-          onTravel={(name) => { setMapOpen(false); submitAction(`Travel to ${name}`); }}
+          onTravel={(id, label) => { setMapOpen(false); submitAction(`Travel to ${label} [destination existingId: ${id}]`); }}
           canTravel={!loading && !combat && !shop && !pendingPurchase}
         />
       )}
@@ -2914,16 +2976,20 @@ export default function DMMemoryTest() {
             <div style={{ marginTop: "10px" }}>
               <div style={{ color: SLATE, fontSize: "10.5px", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "6px" }}>Nearby</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-                {worldState.locations[worldState.locationId].connections.map((id) => (
+                {worldState.locations[worldState.locationId].connections.filter((id) => worldState.locations[id]?.discovered).map((id) => {
+                  const location = worldState.locations[id];
+                  const label = locationDisplayName(location);
+                  return (
                   <button
                     key={id}
-                    onClick={() => submitAction(`Travel to ${worldState.locations[id]?.name}`)}
+                    onClick={() => submitAction(`Travel to ${label} [destination existingId: ${id}]`)}
                     disabled={loading || !!combat || !!shop || !!pendingPurchase}
-                    style={{ background: "transparent", border: "1px solid #4A3F2C", color: SLATE, padding: "3px 9px", fontFamily: "ui-monospace, monospace", fontSize: "10.5px", cursor: loading || combat || shop || pendingPurchase ? "default" : "pointer", opacity: loading || combat || shop || pendingPurchase ? 0.5 : 1 }}
+                    style={{ background: "transparent", border: `1px ${location.visited ? "solid" : "dashed"} #4A3F2C`, color: location.visited ? SLATE : DIM, padding: "3px 9px", fontFamily: "ui-monospace, monospace", fontSize: "10.5px", fontStyle: location.visited ? "normal" : "italic", cursor: loading || combat || shop || pendingPurchase ? "default" : "pointer", opacity: loading || combat || shop || pendingPurchase ? 0.5 : 1 }}
                   >
-                    → {worldState.locations[id]?.name}
+                    → {label}
                   </button>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}
@@ -3330,8 +3396,9 @@ function CompassRose({ size = 70, color = MAP_INK }) {
 
 function MapPanel({ worldState, onClose, onTravel, canTravel }) {
   const { locations, locationId } = worldState;
-  const positions = computeMapLayout(locations, "loc_1");
-  const ids = Object.keys(locations);
+  const visibleLocations = Object.fromEntries(Object.entries(locations).filter(([, location]) => location.discovered));
+  const positions = computeMapLayout(visibleLocations, locationId);
+  const ids = Object.keys(visibleLocations);
 
   const xs = ids.map((id) => positions[id]?.x ?? 0);
   const ys = ids.map((id) => positions[id]?.y ?? 0);
@@ -3345,8 +3412,8 @@ function MapPanel({ worldState, onClose, onTravel, canTravel }) {
   const drawnEdges = new Set();
   const edges = [];
   ids.forEach((id) => {
-    (locations[id]?.connections || []).forEach((cid) => {
-      if (!locations[cid]) return;
+    (visibleLocations[id]?.connections || []).forEach((cid) => {
+      if (!visibleLocations[cid]) return;
       const key = [id, cid].sort().join("|");
       if (drawnEdges.has(key)) return;
       drawnEdges.add(key);
@@ -3354,7 +3421,7 @@ function MapPanel({ worldState, onClose, onTravel, canTravel }) {
     });
   });
 
-  const currentConnections = new Set(locations[locationId]?.connections || []);
+  const currentConnections = new Set(visibleLocations[locationId]?.connections || []);
   const isSparse = ids.length < 2;
 
   return (
@@ -3406,15 +3473,17 @@ function MapPanel({ worldState, onClose, onTravel, canTravel }) {
 
           {ids.map((id) => {
             const pos = positions[id];
-            const loc = locations[id];
+            const loc = visibleLocations[id];
             const isCurrent = id === locationId;
             const isReachable = currentConnections.has(id);
-            const canClick = isReachable && canTravel;
+            const canClick = !isCurrent && loc.discovered && canTravel;
+            const isHazy = !loc.visited;
+            const label = locationDisplayName(loc);
             return (
               <g
                 key={id}
                 transform={`translate(${pos.x}, ${pos.y})`}
-                onClick={() => canClick && onTravel(loc.name)}
+                onClick={() => canClick && onTravel(id, label)}
                 style={{ cursor: canClick ? "pointer" : "default" }}
               >
                 {isCurrent ? (
@@ -3424,7 +3493,7 @@ function MapPanel({ worldState, onClose, onTravel, canTravel }) {
                     <circle cy={-4} r={2.5} fill={PARCHMENT_LIGHT} />
                   </>
                 ) : (
-                  <circle r={5} fill={isReachable ? MAP_INK : "none"} stroke={MAP_INK} strokeWidth={1.5} opacity={isReachable ? 1 : 0.55} />
+                  <circle r={isHazy ? 8 : 5} fill={isHazy ? PARCHMENT_MID : (isReachable ? MAP_INK : "none")} stroke={MAP_INK} strokeWidth={1.5} strokeDasharray={isHazy ? "2 3" : undefined} opacity={isHazy ? 0.45 : (isReachable ? 1 : 0.55)} />
                 )}
                 <text
                   y={isCurrent ? 30 : 20}
@@ -3434,9 +3503,10 @@ function MapPanel({ worldState, onClose, onTravel, canTravel }) {
                   fontSize={isCurrent ? 13 : 11}
                   fontWeight={isCurrent ? 700 : 400}
                   textDecoration={canClick ? "underline" : "none"}
-                  opacity={isCurrent || isReachable ? 1 : 0.7}
+                  fontStyle={isHazy ? "italic" : "normal"}
+                  opacity={isHazy ? 0.5 : (isCurrent || isReachable ? 1 : 0.7)}
                 >
-                  {shortLocationLabel(loc.name)}
+                  {shortLocationLabel(label)}
                 </text>
               </g>
             );
@@ -3533,15 +3603,15 @@ function JournalPanel({ character, worldState, quests, onClose }) {
           )}
         </JournalSection>
 
-        <JournalSection title={`Locations Discovered (${Object.keys(worldState.locations).length})`}>
-          {Object.entries(worldState.locations).map(([id, loc]) => (
+        <JournalSection title={`Locations Discovered (${Object.values(worldState.locations).filter((loc) => loc.discovered).length})`}>
+          {Object.entries(worldState.locations).filter(([, loc]) => loc.discovered).map(([id, loc]) => (
             <div key={id} style={{ marginBottom: "8px" }}>
-              <div style={{ color: id === worldState.locationId ? AMBER : INK, fontSize: "12.5px" }}>
-                • {loc.name}{id === worldState.locationId ? " (here now)" : ""}
+              <div style={{ color: id === worldState.locationId ? AMBER : (loc.visited ? INK : DIM), fontSize: "12.5px", fontStyle: loc.visited ? "normal" : "italic" }}>
+                • {locationDisplayName(loc)}{id === worldState.locationId ? " (here now)" : ""}
               </div>
-              {loc.connections.length > 0 && (
+              {loc.visited && loc.connections.some((cid) => worldState.locations[cid]?.discovered) && (
                 <div style={{ color: SLATE, fontSize: "10.5px", paddingLeft: "12px", marginTop: "2px" }}>
-                  ↔ {loc.connections.map((cid) => worldState.locations[cid]?.name).filter(Boolean).join(", ")}
+                  ↔ {loc.connections.map((cid) => worldState.locations[cid]).filter((connected) => connected?.discovered).map(locationDisplayName).join(", ")}
                 </div>
               )}
             </div>
