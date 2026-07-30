@@ -118,6 +118,49 @@ const ENEMY_TABLE = {
   skeleton: { name: "Skeleton", hp: 20, attack: 5, defense: 3, xpReward: 18, goldReward: 8 },
 };
 
+const SEVERITY_TIERS = {
+  common: { min: 0, max: 29, midpoint: 15, deathChance: 0 },
+  uncommon: { min: 30, max: 49, midpoint: 40, deathChance: 0 },
+  rare: { min: 50, max: 74, midpoint: 62, deathChance: 0.05 },
+  epic: { min: 75, max: 104, midpoint: 90, deathChance: 0.12 },
+  legendary: { min: 105, max: 139, midpoint: 122, deathChance: 0.22 },
+  mythic: { min: 140, max: Infinity, midpoint: 157, deathChance: 0.35 },
+};
+
+function threatScoreFor(enemy) {
+  return enemy.hp + enemy.attack * 3 + enemy.defense * 2;
+}
+
+function severityFor(enemy) {
+  const score = threatScoreFor(enemy);
+  return Object.keys(SEVERITY_TIERS).find((key) => score <= SEVERITY_TIERS[key].max) || "mythic";
+}
+
+function deathChanceForLoss(severity, playerPower, npc) {
+  const tier = SEVERITY_TIERS[severity];
+  // Threat scores include the enemy's entire HP pool; dividing the band's midpoint by
+  // three puts it on the same per-exchange scale as ATK + DEF*2 + level*3.
+  const expectedPower = tier.midpoint / 3;
+  const powerRatio = playerPower / expectedPower;
+  if (tier.deathChance === 0) return { chance: 0, powerRatio, relationshipAdjustment: 0 };
+  const multiplier = powerRatio >= 1.5 ? 0.4 : powerRatio >= 0.85 ? 1 : powerRatio >= 0.5 ? 2 : 3.5;
+  let relationshipAdjustment = 0;
+  if (npc?.lastInteraction === "spared" || (npc && ((npc.trust || 0) >= 6 || (npc.respect || 0) >= 6))) relationshipAdjustment = -0.15;
+  else if (npc && ((npc.trust || 0) <= -4 || (npc.fear || 0) >= 6)) relationshipAdjustment = 0.12;
+  return {
+    chance: clamp(tier.deathChance * multiplier + relationshipAdjustment, 0.02, 0.9),
+    powerRatio,
+    relationshipAdjustment,
+  };
+}
+
+const INJURY_TABLE = {
+  chest: { statKey: "con", amount: -2, description: "A pale, ragged scar crosses the ribs." },
+  arm: { statKey: "str", amount: -2, description: "A deep scar runs along the fighting arm." },
+  leg: { statKey: "dex", amount: -2, description: "A crooked scar marks the wounded leg." },
+  head: { statKey: "wis", amount: -1, description: "A thin scar cuts across the brow." },
+};
+
 const GOLD_TIERS = { small: [1, 5], medium: [6, 15], large: [16, 30] };
 const QUEST_REWARD_TIERS = {
   small: { xp: 20, gold: 10 },
@@ -154,6 +197,7 @@ const CONSUMABLE_TABLE = {
   healing: { healAmount: 25, label: "a restorative" },
   major_healing: { healAmount: 45, label: "a potent restorative" },
   ration: { healAmount: 8, label: "a filling meal" },
+  injury_tonic: { healAmount: 0, curesInjury: true, label: "an injury-curing tonic" },
 };
 
 // Fixed vocabulary of equipment. Claude tags a "loot" event with one of these keys when
@@ -368,7 +412,13 @@ function baseStatsFromAttributes(attributes) {
 // rather than reading raw fields directly, so a level-up or a re-gear can never silently
 // no-op.
 function getEffectiveStats(character) {
-  const base = baseStatsFromAttributes(character.attributes);
+  const effectiveAttributes = { ...character.attributes };
+  (character.injuries || []).filter((injury) => !injury.cured).forEach((injury) => {
+    if (Object.prototype.hasOwnProperty.call(effectiveAttributes, injury.statKey)) {
+      effectiveAttributes[injury.statKey] = Math.max(1, effectiveAttributes[injury.statKey] + injury.amount);
+    }
+  });
+  const base = baseStatsFromAttributes(effectiveAttributes);
   const weaponItem = character.equipped?.weapon;
   const armorItem = character.equipped?.armor;
   const weaponDef = weaponItem ? EQUIPMENT_TABLE[weaponItem.equipmentKey] : null;
@@ -377,7 +427,7 @@ function getEffectiveStats(character) {
   const armorRarityMult = armorItem ? RARITY_TIERS[rarityOf(armorItem)].statMult : 1;
   const weaponBonus = weaponDef ? Math.round(weaponDef.atkBonus * weaponRarityMult) : 0;
   const armorBonus = armorDef ? Math.round(armorDef.defBonus * armorRarityMult) : 0;
-  const unlocked = getUnlockedAbilities(character.attributes);
+  const unlocked = getUnlockedAbilities(effectiveAttributes);
   const has = (key) => unlocked.some((a) => a.key === key);
   return {
     atk: base.attack + weaponBonus,
@@ -481,6 +531,10 @@ const initialCharacter = {
     { id: "item_2", name: "Rations", consumableKind: "ration", equipmentKey: null, rarity: "common", quantity: 3 },
   ],
   equipped: { weapon: null, armor: null },
+  injuries: [],
+  scars: [],
+  isDead: false,
+  death: null,
 };
 
 // Builds the opening scene straight from the chosen identity, with plain code —
@@ -529,7 +583,7 @@ const TUTORIAL_STEPS = [
   },
   {
     title: "HP, Level & XP",
-    body: "Your health and level/XP show at the top of the screen and in the Character Ledger. If your HP hits 0, you're not permanently killed — you wake up battered at 1 HP. XP fills a bar until you level up.",
+    body: "Your health and level/XP show at the top of the screen and in the Character Ledger. Defeat by a dangerous foe can leave an injury, a permanent scar, or even end your story. XP fills a bar until you level up.",
   },
   {
     title: "Attributes",
@@ -657,8 +711,8 @@ Respond with ONLY valid JSON, no markdown fences, no preamble:
     "worldFacts": ["short new persistent facts, if any"]
   },
   "events": [
-    {"type": "encounter", "enemyType": "goblin|wolf|bandit|skeleton"},
-    {"type": "loot", "itemName": "string", "consumableKind": "minor_healing|healing|major_healing|ration|null", "equipmentKey": "rusty_dagger|steel_dagger|iron_sword|silver_rapier|war_axe|oak_staff|robes|leather_armor|chainmail|plate_armor|null"},
+    {"type": "encounter", "enemyType": "goblin|wolf|bandit|skeleton", "npcId": "string, optional — exact existing NPC id when this enemy is that named NPC"},
+    {"type": "loot", "itemName": "string", "consumableKind": "minor_healing|healing|major_healing|ration|injury_tonic|null", "equipmentKey": "rusty_dagger|steel_dagger|iron_sword|silver_rapier|war_axe|oak_staff|robes|leather_armor|chainmail|plate_armor|null"},
     {"type": "gold_found", "tier": "small|medium|large"},
     {"type": "gold_spent", "tier": "small|medium|large", "reason": "short description, e.g. 'a room for the night'"},
     {"type": "quest_offer", "title": "string", "description": "string", "tier": "small|medium|large", "requiresNpcId": "string, optional — exact existing npc id this quest depends on trusting", "minTrust": "number, optional — minimum trust with that npc, only meaningful alongside requiresNpcId"},
@@ -683,7 +737,7 @@ Whenever your narration describes the player paying for anything — a room, a m
 
 If what's purchased is a physical, carryable good (food, drink, supplies, a trinket, equipment) rather than a pure service (lodging, information, a favor), ALSO include a matching "loot" event so it lands in the player's inventory — narrate it as something they now have, not something already consumed on the spot, even for food or drink. The player decides later when to use it.
 
-For "loot" events: set "consumableKind" ONLY when the item is a usable curative the player could consume later — a healing potion, an elixir, a ration, a poultice — and it must be one of the four fixed kinds listed above (pick whichever best matches the narrative potency you described: minor_healing < healing < major_healing; rations are always "ration"). For anything else — weapons, armor, quest items, trinkets, keys, curios — omit consumableKind or set it to null. Never invent a new kind, and never tag equipment or quest items as consumable.
+For "loot" events: set "consumableKind" ONLY when the item is a usable curative the player could consume later — a healing potion, an elixir, a ration, a poultice — and it must be one of the five fixed kinds listed above (pick whichever best matches the narrative potency you described: minor_healing < healing < major_healing; rations are always "ration"; a remedy explicitly meant to treat a lasting wound is "injury_tonic"). For anything else — weapons, armor, quest items, trinkets, keys, curios — omit consumableKind or set it to null. Never invent a new kind, and never tag equipment or quest items as consumable.
 
 Likewise, set "equipmentKey" ONLY when the item is a wearable weapon or armor piece, and it must be exactly one of the fixed keys listed above — pick whichever fits your narration best (e.g. narrating "a battered iron blade" would use "iron_sword"; "a suit of banded steel" would use "chainmail"). A single item should have at most ONE of consumableKind or equipmentKey set, never both — pick whichever the item actually is, or leave both null for quest items, trinkets, and curios with no coded effect yet. Never invent a new equipment key.
 
@@ -703,7 +757,7 @@ const COMBAT_NARRATION_SYSTEM_PROMPT = `You are narrating one exchange of combat
 
 CRITICAL: Do not invent a different outcome, different damage, or different result than what's given. You are describing what already happened, not deciding it.
 
-The facts may include "playerCrit": true (the player's attack landed as a solid, exceptional hit — narrate it as such) or "playerDodged": true (an incoming attack was cleanly evaded and dealt no damage at all — narrate an actual dodge, not just a graze). They may also include "powerStrike": true (the player committed to an unusually heavy, all-in blow — narrate bigger wind-up and impact, and note they're left a little exposed), "secondWindHeal": a number (the player caught a genuine second wind and recovered that much health mid-fight — narrate a real moment of resilience, not a minor breather), or "enemyFled": true (the enemy's nerve broke entirely and they ran — this is NOT a defeat, narrate them escaping alive, rattled).
+The facts may include "playerCrit": true (the player's attack landed as a solid, exceptional hit — narrate it as such) or "playerDodged": true (an incoming attack was cleanly evaded and dealt no damage at all — narrate an actual dodge, not just a graze). They may also include "powerStrike": true (the player committed to an unusually heavy, all-in blow — narrate bigger wind-up and impact, and note they're left a little exposed), "secondWindHeal": a number (the player caught a genuine second wind and recovered that much health mid-fight — narrate a real moment of resilience, not a minor breather), or "enemyFled": true (the enemy's nerve broke entirely and they ran — this is NOT a defeat, narrate them escaping alive, rattled). If "playerDied" is true, narrate an unambiguous death. If "injuryArea" is present, make the surviving wound fit that fixed body area.
 
 Respond with ONLY valid JSON: {"narration": "string"}`;
 
@@ -1254,6 +1308,10 @@ export default function DMMemoryTest() {
       const { attack: _oldAttack, defense: _oldDefense, maxHp: _oldMaxHp, pendingLevelUps: _oldPending, ...restOfSavedCharacter } = saved.character;
       setCharacter({
         equipped: { weapon: null, armor: null },
+        injuries: [],
+        scars: [],
+        isDead: false,
+        death: null,
         bankedSkillPoints: saved.character.bankedSkillPoints ?? migratedPendingPoints,
         dailyTrainingUsed: saved.character.dailyTrainingUsed ?? 0,
         dailyTrainingCap: saved.character.dailyTrainingCap ?? DAILY_TRAINING_CAP,
@@ -1644,6 +1702,11 @@ export default function DMMemoryTest() {
     const effect = CONSUMABLE_TABLE[item.consumableKind];
     if (!effect) return;
 
+    const activeInjuries = (character.injuries || []).filter((injury) => !injury.cured);
+    if (effect.curesInjury && activeInjuries.length === 0) {
+      pushSystemLine(`You have no injury for ${item.name} to cure.`);
+      return;
+    }
     const maxHp = getEffectiveStats(character).maxHp;
     const scaledHeal = Math.round(effect.healAmount * RARITY_TIERS[rarityOf(item)].statMult);
     const healedAmount = Math.min(scaledHeal, maxHp - character.hp);
@@ -1655,9 +1718,16 @@ export default function DMMemoryTest() {
       nextInventory.splice(idx, 1);
     }
 
-    setCharacter((c) => ({ ...c, hp: newHp, inventory: nextInventory }));
+    setCharacter((c) => ({
+      ...c,
+      hp: newHp,
+      inventory: nextInventory,
+      injuries: effect.curesInjury ? (c.injuries || []).filter((_, index) => index !== 0) : c.injuries,
+    }));
     pushSystemLine(
-      healedAmount > 0
+      effect.curesInjury
+        ? `+ Used ${item.name}: your oldest injury has healed (the scar remains).`
+        : healedAmount > 0
         ? `+ Used ${item.name}: healed ${healedAmount} HP (${newHp}/${maxHp})`
         : `Used ${item.name}, but you were already at full health.`
     );
@@ -1723,8 +1793,13 @@ export default function DMMemoryTest() {
     if (!pendingPurchase) return;
     const { amount, reason } = pendingPurchase;
     const actuallySpent = Math.min(amount, character.gold);
-    setCharacter((c) => ({ ...c, gold: c.gold - Math.min(amount, c.gold) }));
+    setCharacter((c) => ({
+      ...c,
+      gold: c.gold - Math.min(amount, c.gold),
+      injuries: pendingPurchase.healsInjury ? (c.injuries || []).filter((_, index) => index !== 0) : c.injuries,
+    }));
     pushSystemLine(`- ${actuallySpent} gold for ${reason}`);
+    if (pendingPurchase.healsInjury) pushSystemLine(`+ A healer tends your oldest injury; its scar remains.`);
     setPendingPurchase(null);
   }
 
@@ -1739,13 +1814,17 @@ export default function DMMemoryTest() {
     (events || []).forEach((event) => {
       if (event.type === "encounter" && !combatStartedThisTurn) {
         const enemyDef = ENEMY_TABLE[event.enemyType] || ENEMY_TABLE.goblin;
+        const severity = severityFor(enemyDef);
         setCombat({
           enemyType: event.enemyType,
           enemy: { name: enemyDef.name, hp: enemyDef.hp, maxHp: enemyDef.hp, attack: enemyDef.attack, defense: enemyDef.defense },
+          npcId: event.npcId || null,
+          severity,
+          threatScore: threatScoreFor(enemyDef),
           secondWindUsed: false,
         });
         combatStartedThisTurn = true;
-        pushSystemLine(`⚔ A ${enemyDef.name.toLowerCase()} attacks! (HP ${enemyDef.hp}, ATK ${enemyDef.attack}, DEF ${enemyDef.defense})`);
+        pushSystemLine(`⚔ A ${enemyDef.name.toLowerCase()} attacks! (${severity.toUpperCase()} threat · HP ${enemyDef.hp}, ATK ${enemyDef.attack}, DEF ${enemyDef.defense})`);
       } else if (event.type === "loot") {
         // Only recognize consumableKind/equipmentKey if they're one of the fixed,
         // code-owned entries — anything else Claude might invent is silently treated as
@@ -1763,7 +1842,9 @@ export default function DMMemoryTest() {
         pushSystemLine(`+ ${amount} gold`);
       } else if (event.type === "gold_spent") {
         const amount = rollGoldForTier(event.tier);
-        setPendingPurchase({ reason: event.reason || "a purchase", tier: event.tier, amount });
+        const reason = event.reason || "a purchase";
+        const healsInjury = /heal(?:er|ing)?|treat|injur|physician/i.test(reason) && (character.injuries || []).length > 0;
+        setPendingPurchase({ reason, tier: event.tier, amount, healsInjury });
       } else if (event.type === "quest_offer") {
         // Optional trust gate: if Claude ties this quest to a specific NPC's trust,
         // code enforces the threshold rather than trusting Claude's own judgment about
@@ -1816,7 +1897,7 @@ export default function DMMemoryTest() {
             return prev;
           }
           const npc = prev.npcs[idx];
-          const updatedNpc = { ...npc };
+          const updatedNpc = { ...npc, lastInteraction: event.interaction };
           const changeParts = [];
           Object.entries(deltas).forEach(([counter, delta]) => {
             const oldVal = npc[counter] || 0;
@@ -1883,9 +1964,10 @@ export default function DMMemoryTest() {
         }
       } else if (event.type === "day_advance") {
         setWorldState((prev) => ({ ...prev, day: (prev.day || 1) + 1 }));
-        setCharacter((prev) => ({ ...prev, dailyTrainingUsed: 0 }));
+        setCharacter((prev) => ({ ...prev, dailyTrainingUsed: 0, injuries: (prev.injuries || []).slice(1) }));
         setTrainingOffer(null);
         pushSystemLine(`☀ A new day begins${event.reason ? ` — ${event.reason}` : ""}. Training stamina restored.`);
+        if ((character.injuries || []).length > 0) pushSystemLine(`+ A full rest heals your oldest injury; its scar remains.`);
       }
     });
   }
@@ -2138,7 +2220,36 @@ export default function DMMemoryTest() {
       facts.goldGained = enemyDef.goldReward;
     }
     if (facts.playerDefeated) {
-      nextCharacter.hp = 1; // soft-fail rather than permadeath, for prototype purposes
+      const enemyDef = ENEMY_TABLE[combat.enemyType] || ENEMY_TABLE.goblin;
+      const severity = combat.severity || severityFor(enemyDef);
+      const linkedNpc = combat.npcId ? worldState.npcs.find((npc) => npc.id === combat.npcId) : null;
+      const playerPower = effStats.atk + effStats.def * 2 + nextCharacter.level * 3;
+      const deathRisk = deathChanceForLoss(severity, playerPower, linkedNpc);
+      const died = Math.random() < deathRisk.chance;
+      facts.severity = severity;
+      facts.deathChance = deathRisk.chance;
+      facts.powerRatio = deathRisk.powerRatio;
+      facts.playerDied = died;
+
+      if (died) {
+        nextCharacter.hp = 0;
+        nextCharacter.isDead = true;
+        nextCharacter.death = { enemyName: enemyDef.name, severity };
+      } else {
+        nextCharacter.hp = 1;
+        if (severity === "common" || severity === "uncommon") {
+          const goldLost = Math.min(nextCharacter.gold, rollGoldForTier("small"));
+          nextCharacter.gold -= goldLost;
+          facts.goldLost = goldLost;
+        } else {
+          const areas = Object.keys(INJURY_TABLE);
+          const area = areas[Math.floor(Math.random() * areas.length)];
+          const injury = INJURY_TABLE[area];
+          nextCharacter.injuries = [...(nextCharacter.injuries || []), { area, statKey: injury.statKey, amount: injury.amount, cured: false }];
+          nextCharacter.scars = [...(nextCharacter.scars || []), { area, description: injury.description }];
+          facts.injuryArea = area;
+        }
+      }
     }
 
     setCharacter(nextCharacter);
@@ -2150,7 +2261,9 @@ export default function DMMemoryTest() {
       const result = await callModel(COMBAT_NARRATION_SYSTEM_PROMPT, JSON.stringify(facts, null, 2), 400, 1, null, (info) => pushDebugEntry(`combat:${actionType}`, info));
       setLog((l) => [...l, { role: "dm", narration: result.narration, suggestedActions: combatEnded ? ["Look around", "Check inventory", "Continue on"] : null }]);
       if (facts.enemyDefeated) pushSystemLine(`✓ Enemy defeated (+${facts.xpGained} XP, +${facts.goldGained} gold)${nextCharacter.levelUps?.length ? ` — Level up! Now level ${nextCharacter.level}; ${ATTRIBUTE_POINTS_PER_LEVEL} skill points banked.` : ""}`);
-      if (facts.playerDefeated) pushSystemLine(`✝ You were defeated and wake later, battered, at 1 HP.`);
+      if (facts.playerDefeated && facts.playerDied) pushSystemLine(`✝ ${combat.enemy.name} has ended your story.`);
+      else if (facts.playerDefeated && facts.injuryArea) pushSystemLine(`✝ You survive at 1 HP with a ${facts.injuryArea} injury and a permanent scar.`);
+      else if (facts.playerDefeated) pushSystemLine(`✝ You wake at 1 HP, missing ${facts.goldLost || 0} gold.`);
       if (facts.fled) pushSystemLine(`→ You escaped the fight.`);
       if (facts.enemyFled) pushSystemLine(`→ ${combat.enemy.name} breaks and flees — no reward, but the fight's over.`);
       if (typeof facts.secondWindHeal === "number") pushSystemLine(`♥ Second Wind: recovered ${facts.secondWindHeal} HP.`);
@@ -2174,6 +2287,27 @@ export default function DMMemoryTest() {
       <>
         {FONT_IMPORTS}
         <CharacterCreationScreen mode={identityMode} onSubmit={submitIdentity} />
+      </>
+    );
+  }
+
+  if (character.isDead) {
+    const death = character.death || { enemyName: "an unknown foe", severity: "unknown" };
+    return (
+      <>
+        {FONT_IMPORTS}
+        <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", background: "radial-gradient(ellipse at center, #2B1115 0%, #14110D 68%)", color: INK, fontFamily: BODY_FONT }}>
+          <div style={{ width: "min(520px, 100%)", padding: "38px", textAlign: "center", border: `2px solid ${BLOOD}`, background: "linear-gradient(180deg, #241719 0%, #171210 100%)", boxShadow: "0 18px 60px rgba(0,0,0,.55)" }}>
+            <RavenGlyph size={34} color={WOUND} style={{ margin: "0 auto 14px" }} />
+            <h1 style={{ margin: 0, color: WOUND, fontFamily: DISPLAY_FONT, fontSize: "34px", letterSpacing: ".08em", textTransform: "uppercase" }}>You have died</h1>
+            <p style={{ color: SLATE, fontSize: "16px", lineHeight: 1.7, margin: "18px 0 26px" }}>
+              {character.identity?.name || "Your adventurer"} fell to {death.enemyName} — a <span style={{ color: AMBER }}>{death.severity}</span> threat. The chronicle ends here.
+            </p>
+            <button onClick={startNewGame} style={{ border: `1px solid ${AMBER}`, background: "linear-gradient(180deg, #5B3B18 0%, #33200F 100%)", color: INK, padding: "11px 22px", fontFamily: DISPLAY_FONT, fontSize: "13px", letterSpacing: ".06em", textTransform: "uppercase", cursor: "pointer" }}>
+              Start a new game
+            </button>
+          </div>
+        </div>
       </>
     );
   }
@@ -2539,6 +2673,19 @@ export default function DMMemoryTest() {
           })}
         </LedgerSection>
 
+        {((character.injuries || []).length > 0 || (character.scars || []).length > 0) && (
+          <LedgerSection title="Injuries & Scars">
+            {(character.injuries || []).map((injury, index) => (
+              <div key={`injury-${index}`} style={{ color: WOUND, marginBottom: "5px", textTransform: "capitalize" }}>
+                {injury.area} injury · {ATTRIBUTE_DEFS[injury.statKey].short} {injury.amount}
+              </div>
+            ))}
+            {(character.scars || []).map((scar, index) => (
+              <div key={`scar-${index}`} style={{ color: SLATE, fontSize: "10.5px", marginBottom: "4px" }}>{scar.description}</div>
+            ))}
+          </LedgerSection>
+        )}
+
         <LedgerSection title={`Abilities (${characterEffStats.abilities.length}/${Object.values(ABILITY_TABLE).flat().length})`}>
           {Object.entries(ABILITY_TABLE).map(([attrKey, abilities]) =>
             abilities.map((a) => {
@@ -2621,7 +2768,7 @@ export default function DMMemoryTest() {
                       <span style={{ color: nameColor }}>• {item.name}</span>
                       {rarity.label !== "Common" && <span style={{ color: nameColor, fontSize: "10px", marginLeft: "5px" }}>({rarity.label})</span>}
                       {item.quantity > 1 && <span style={{ color: SLATE }}> ×{item.quantity}</span>}
-                      {isConsumable && <span style={{ color: CODE_VOICE, fontSize: "10.5px", marginLeft: "6px" }}>(+{Math.round(CONSUMABLE_TABLE[item.consumableKind].healAmount * rarity.statMult)} HP)</span>}
+                      {isConsumable && <span style={{ color: CODE_VOICE, fontSize: "10.5px", marginLeft: "6px" }}>{CONSUMABLE_TABLE[item.consumableKind].curesInjury ? "(cures one injury)" : `(+${Math.round(CONSUMABLE_TABLE[item.consumableKind].healAmount * rarity.statMult)} HP)`}</span>}
                       {equipDef && <span style={{ color: CODE_VOICE, fontSize: "10.5px", marginLeft: "6px" }}>(+{Math.round((equipDef.slot === "weapon" ? equipDef.atkBonus : equipDef.defBonus) * rarity.statMult)} {equipDef.slot === "weapon" ? "ATK" : "DEF"})</span>}
                     </div>
                   </div>
@@ -3252,6 +3399,17 @@ function JournalPanel({ character, worldState, quests, onClose }) {
             <div style={{ color: SLATE, fontSize: "12px", marginTop: "6px", fontStyle: "italic" }}>{worldState.reputation}</div>
           </div>
         )}
+
+        <JournalSection title="Wounds & Scars">
+          {(character.injuries || []).length === 0 && (character.scars || []).length === 0 ? (
+            <div style={{ color: DIM, fontSize: "12px" }}>No lasting marks recorded.</div>
+          ) : (
+            <>
+              {(character.injuries || []).map((injury, index) => <div key={`journal-injury-${index}`} style={{ color: WOUND, fontSize: "12px", marginBottom: "5px", textTransform: "capitalize" }}>{injury.area} injury ({ATTRIBUTE_DEFS[injury.statKey].short} {injury.amount})</div>)}
+              {(character.scars || []).map((scar, index) => <div key={`journal-scar-${index}`} style={{ color: SLATE, fontSize: "11.5px", marginBottom: "5px" }}>{scar.description}</div>)}
+            </>
+          )}
+        </JournalSection>
 
         <JournalSection title={`People Met (${worldState.npcs.length})`}>
           {worldState.npcs.length === 0 ? (
