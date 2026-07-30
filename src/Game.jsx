@@ -1144,6 +1144,7 @@ export default function DMMemoryTest() {
   const [quests, setQuests] = useState([]);
   const [combat, setCombat] = useState(null); // { enemyType, enemy: {name,hp,maxHp,attack,defense} }
   const [shop, setShop] = useState(null); // { npcId, merchantType }
+  const [pendingPurchase, setPendingPurchase] = useState(null); // { reason, tier, amount }
   const [trainingOffer, setTrainingOffer] = useState(null); // { npcId, stat }
   // Monotonic ID counters — refs, not state, since incrementing them shouldn't itself
   // trigger a render. Code is the only thing that ever assigns an id; Claude only ever
@@ -1265,6 +1266,7 @@ export default function DMMemoryTest() {
     if (saved.log) setLog(saved.log);
     if (saved.combat !== undefined) setCombat(saved.combat);
     setShop(null); // shop panels never persist — always resume back out in the world
+    setPendingPurchase(null); // unresolved purchase prompts are transient, like shops
     setTrainingOffer(null);
     // Restoring the id counters is essential, not optional — without this, a fresh
     // session would start both counters back at their defaults and the next new NPC,
@@ -1435,6 +1437,7 @@ export default function DMMemoryTest() {
     setQuests([]);
     setCombat(null);
     setShop(null);
+    setPendingPurchase(null);
     setLog(INITIAL_LOG);
     nextNpcIdRef.current = 1;
     nextLocationIdRef.current = 2;
@@ -1716,6 +1719,21 @@ export default function DMMemoryTest() {
     setShop(null);
   }
 
+  function payPendingPurchase() {
+    if (!pendingPurchase) return;
+    const { amount, reason } = pendingPurchase;
+    const actuallySpent = Math.min(amount, character.gold);
+    setCharacter((c) => ({ ...c, gold: c.gold - Math.min(amount, c.gold) }));
+    pushSystemLine(`- ${actuallySpent} gold for ${reason}`);
+    setPendingPurchase(null);
+  }
+
+  function declinePendingPurchase() {
+    if (!pendingPurchase) return;
+    pushSystemLine(`Declined to pay ${pendingPurchase.amount} gold for ${pendingPurchase.reason}.`);
+    setPendingPurchase(null);
+  }
+
   function processEvents(events) {
     let combatStartedThisTurn = combat;
     (events || []).forEach((event) => {
@@ -1745,15 +1763,7 @@ export default function DMMemoryTest() {
         pushSystemLine(`+ ${amount} gold`);
       } else if (event.type === "gold_spent") {
         const amount = rollGoldForTier(event.tier);
-        setCharacter((c) => {
-          const actuallySpent = Math.min(amount, c.gold);
-          if (actuallySpent < amount) {
-            pushSystemLine(`- ${actuallySpent} gold for ${event.reason || "a purchase"} (had less than the ${amount} it should have cost)`);
-          } else {
-            pushSystemLine(`- ${amount} gold for ${event.reason || "a purchase"}`);
-          }
-          return { ...c, gold: c.gold - actuallySpent };
-        });
+        setPendingPurchase({ reason: event.reason || "a purchase", tier: event.tier, amount });
       } else if (event.type === "quest_offer") {
         // Optional trust gate: if Claude ties this quest to a specific NPC's trust,
         // code enforces the threshold rather than trusting Claude's own judgment about
@@ -1922,7 +1932,7 @@ export default function DMMemoryTest() {
   }
 
   async function submitAction(action) {
-    if (!action.trim() || loading || combat || shop || trainingOffer) return;
+    if (!action.trim() || loading || combat || shop || pendingPurchase || trainingOffer) return;
     setLoading(true);
     setError(null);
     setLog((l) => [...l, { role: "player", text: action }]);
@@ -2191,7 +2201,7 @@ export default function DMMemoryTest() {
           worldState={worldState}
           onClose={() => setMapOpen(false)}
           onTravel={(name) => { setMapOpen(false); submitAction(`Travel to ${name}`); }}
-          canTravel={!loading && !combat && !shop}
+          canTravel={!loading && !combat && !shop && !pendingPurchase}
         />
       )}
       {pauseOpen && (
@@ -2321,7 +2331,7 @@ export default function DMMemoryTest() {
                 {entry.suggestedActions && (
                   <div style={{ marginTop: "14px", display: "flex", flexWrap: "wrap", gap: "8px" }}>
                     {entry.suggestedActions.map((a, j) => (
-                      <button key={j} onClick={() => submitAction(a)} disabled={loading} style={{ background: "linear-gradient(180deg, #241D15 0%, #1A150F 100%)", border: "1px solid #4A3F2C", color: INK, padding: "7px 14px", fontFamily: DISPLAY_FONT, fontSize: "11.5px", letterSpacing: "0.03em", cursor: loading ? "default" : "pointer", opacity: loading ? 0.5 : 1, borderRadius: "2px" }}>
+                      <button key={j} onClick={() => submitAction(a)} disabled={loading || !!combat || !!shop || !!pendingPurchase || !!trainingOffer} style={{ background: "linear-gradient(180deg, #241D15 0%, #1A150F 100%)", border: "1px solid #4A3F2C", color: INK, padding: "7px 14px", fontFamily: DISPLAY_FONT, fontSize: "11.5px", letterSpacing: "0.03em", cursor: loading || combat || shop || pendingPurchase || trainingOffer ? "default" : "pointer", opacity: loading || combat || shop || pendingPurchase || trainingOffer ? 0.5 : 1, borderRadius: "2px" }}>
                         {a}
                       </button>
                     ))}
@@ -2370,6 +2380,16 @@ export default function DMMemoryTest() {
               onBuy={buyFromShop}
               onSell={sellToShop}
               onClose={closeShop}
+              loading={loading}
+            />
+          )}
+
+          {pendingPurchase && (
+            <PurchaseConfirmPanel
+              purchase={pendingPurchase}
+              character={character}
+              onPay={payPendingPurchase}
+              onDecline={declinePendingPurchase}
               loading={loading}
             />
           )}
@@ -2437,8 +2457,8 @@ export default function DMMemoryTest() {
         </div>
 
         <form onSubmit={(e) => { e.preventDefault(); submitAction(input); }} style={{ display: "flex", borderTop: "1px solid #33291D", padding: "12px 16px", gap: "10px" }}>
-          <input value={input} onChange={(e) => setInput(e.target.value)} placeholder={combat ? "Resolve combat above first..." : shop ? "Finish trading above first..." : trainingOffer ? "Answer the training offer above first..." : "What do you do?"} disabled={loading || !!combat || !!shop || !!trainingOffer} style={{ flex: 1, background: "#1A1611", border: "1px solid #33291D", color: INK, padding: "10px 12px", fontFamily: BODY_FONT, fontSize: "15px", outline: "none", opacity: combat || shop || trainingOffer ? 0.4 : 1, borderRadius: "2px" }} />
-          <button type="submit" disabled={loading || !!combat || !!shop || !!trainingOffer} style={{ background: `linear-gradient(180deg, ${BLOOD} 0%, #4A1620 100%)`, border: `1px solid ${BLOOD}`, color: INK, padding: "10px 20px", fontFamily: DISPLAY_FONT, fontSize: "12.5px", letterSpacing: "0.06em", textTransform: "uppercase", cursor: loading || combat || shop || trainingOffer ? "default" : "pointer", opacity: loading || combat || shop || trainingOffer ? 0.5 : 1, borderRadius: "2px" }}>
+          <input value={input} onChange={(e) => setInput(e.target.value)} placeholder={combat ? "Resolve combat above first..." : shop ? "Finish trading above first..." : pendingPurchase ? "Answer the purchase prompt above first..." : trainingOffer ? "Answer the training offer above first..." : "What do you do?"} disabled={loading || !!combat || !!shop || !!pendingPurchase || !!trainingOffer} style={{ flex: 1, background: "#1A1611", border: "1px solid #33291D", color: INK, padding: "10px 12px", fontFamily: BODY_FONT, fontSize: "15px", outline: "none", opacity: combat || shop || pendingPurchase || trainingOffer ? 0.4 : 1, borderRadius: "2px" }} />
+          <button type="submit" disabled={loading || !!combat || !!shop || !!pendingPurchase || !!trainingOffer} style={{ background: `linear-gradient(180deg, ${BLOOD} 0%, #4A1620 100%)`, border: `1px solid ${BLOOD}`, color: INK, padding: "10px 20px", fontFamily: DISPLAY_FONT, fontSize: "12.5px", letterSpacing: "0.06em", textTransform: "uppercase", cursor: loading || combat || shop || pendingPurchase || trainingOffer ? "default" : "pointer", opacity: loading || combat || shop || pendingPurchase || trainingOffer ? 0.5 : 1, borderRadius: "2px" }}>
             Act
           </button>
         </form>
@@ -2657,8 +2677,8 @@ export default function DMMemoryTest() {
                   <button
                     key={id}
                     onClick={() => submitAction(`Travel to ${worldState.locations[id]?.name}`)}
-                    disabled={loading || !!combat || !!shop}
-                    style={{ background: "transparent", border: "1px solid #4A3F2C", color: SLATE, padding: "3px 9px", fontFamily: "ui-monospace, monospace", fontSize: "10.5px", cursor: loading ? "default" : "pointer", opacity: loading ? 0.5 : 1 }}
+                    disabled={loading || !!combat || !!shop || !!pendingPurchase}
+                    style={{ background: "transparent", border: "1px solid #4A3F2C", color: SLATE, padding: "3px 9px", fontFamily: "ui-monospace, monospace", fontSize: "10.5px", cursor: loading || combat || shop || pendingPurchase ? "default" : "pointer", opacity: loading || combat || shop || pendingPurchase ? 0.5 : 1 }}
                   >
                     → {worldState.locations[id]?.name}
                   </button>
@@ -3416,6 +3436,34 @@ function ShopPanel({ shopNpc, merchantType, character, onBuy, onSell, onClose, l
             })
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function PurchaseConfirmPanel({ purchase, character, onPay, onDecline, loading }) {
+  const canAfford = character.gold >= purchase.amount;
+
+  return (
+    <div style={{ margin: "20px 0", padding: "16px", border: `2px solid ${AMBER}`, background: "linear-gradient(180deg, #241D12 0%, #191510 100%)", boxShadow: "inset 0 0 24px rgba(0,0,0,0.4)", borderRadius: "3px" }}>
+      <div style={{ fontFamily: DISPLAY_FONT, fontSize: "13px", letterSpacing: "0.05em", color: AMBER, display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
+        <RavenGlyph size={12} color={AMBER} /> Confirm Purchase
+      </div>
+      <div style={{ color: INK, fontSize: "14px", marginBottom: "8px" }}>{purchase.reason}</div>
+      <div style={{ color: SLATE, fontSize: "11px", marginBottom: "14px", fontFamily: "ui-monospace, monospace" }}>
+        Cost: <span style={{ color: canAfford ? AMBER : WOUND }}>{purchase.amount}g</span> · Your gold: <span style={{ color: AMBER }}>{character.gold}g</span>
+      </div>
+      <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+        <button
+          onClick={onPay}
+          disabled={loading || !canAfford}
+          style={{ background: "transparent", border: `1px solid ${canAfford ? AMBER : "#4A3F2C"}`, color: canAfford ? AMBER : DIM, padding: "5px 11px", fontFamily: "ui-monospace, monospace", fontSize: "11px", cursor: loading || !canAfford ? "default" : "pointer" }}
+        >
+          Pay {purchase.amount}g
+        </button>
+        <button onClick={onDecline} disabled={loading} style={{ background: "transparent", border: "1px solid #4A3F2C", color: SLATE, padding: "5px 11px", fontFamily: "ui-monospace, monospace", fontSize: "11px", cursor: loading ? "default" : "pointer" }}>
+          Decline
+        </button>
       </div>
     </div>
   );
