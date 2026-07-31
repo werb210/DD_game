@@ -127,6 +127,18 @@ const SEVERITY_TIERS = {
   mythic: { min: 140, max: Infinity, midpoint: 157, deathChance: 0.35 },
 };
 
+const SKILL_CHECK_TYPES = {
+  force: { attribute: "str", label: "Force" },
+  finesse: { attribute: "dex", label: "Finesse" },
+  endure: { attribute: "con", label: "Endure" },
+  discern: { attribute: "int", label: "Discern" },
+  perceive: { attribute: "wis", label: "Perceive" },
+  sway: { attribute: "cha", label: "Sway" },
+};
+
+const SEVERITY_ORDER = Object.keys(SEVERITY_TIERS);
+const SKILL_CHECK_DIFFICULTY_SCALING = 0.25;
+
 function threatScoreFor(enemy) {
   return enemy.hp + enemy.attack * 3 + enemy.defense * 2;
 }
@@ -151,6 +163,40 @@ function deathChanceForLoss(severity, playerPower, npc) {
     chance: clamp(tier.deathChance * multiplier + relationshipAdjustment, 0.02, 0.9),
     powerRatio,
     relationshipAdjustment,
+  };
+}
+
+function factionReferenceContainsName(name) {
+  const target = String(name || "").trim().toLowerCase();
+  if (!target) return false;
+  function contains(value) {
+    if (typeof value === "string") return value.trim().toLowerCase() === target;
+    if (Array.isArray(value)) return value.some(contains);
+    return value && typeof value === "object" && Object.entries(value).some(([key, entry]) => key.trim().toLowerCase() === target || contains(entry));
+  }
+  return contains(FACTIONS_TABLE);
+}
+
+function skillCheckOdds(offer, worldState, character) {
+  const check = SKILL_CHECK_TYPES[offer?.checkType];
+  if (!check) return null;
+  const location = worldState.locations[worldState.locationId] || WORLD_MAP[worldState.locationId];
+  const baseTier = SEVERITY_TIERS[location?.dangerTier] ? location.dangerTier : "common";
+  const npc = offer.npcId ? worldState.npcs.find((entry) => entry.id === offer.npcId) : null;
+  const leaderBump = !!npc && factionReferenceContainsName(npc.name);
+  const tierIndex = Math.min(SEVERITY_ORDER.length - 1, SEVERITY_ORDER.indexOf(baseTier) + (leaderBump ? 1 : 0));
+  const difficultyTier = SEVERITY_ORDER[tierIndex];
+  const difficultyNumeric = SEVERITY_TIERS[difficultyTier].midpoint;
+  const baseChance = clamp(70 + (character.attributes?.[check.attribute] || 0) * 0.5 - difficultyNumeric * SKILL_CHECK_DIFFICULTY_SCALING, 10, 95);
+  let relationshipAdjustment = 0;
+  if (npc?.lastInteraction === "spared" || (npc && ((npc.trust || 0) >= 6 || (npc.respect || 0) >= 6))) relationshipAdjustment = 15;
+  else if (npc && ((npc.trust || 0) <= -4 || (npc.fear || 0) >= 6)) relationshipAdjustment = -12;
+  return {
+    chance: clamp(Math.round(baseChance + relationshipAdjustment), 10, 95),
+    difficultyTier,
+    difficultyNumeric,
+    relationshipAdjustment,
+    check,
   };
 }
 
@@ -895,6 +941,7 @@ Respond with ONLY valid JSON, no markdown fences, no preamble:
     ,{"type": "training_offer", "id": "exact existing trainer npc id", "stat": "STR|DEX|CON|INT|WIS|CHA"}
     ,{"type": "location_hint", "existingId": "exact WORLD MAP location id"}
     ,{"type": "day_advance", "reason": "short description of the sleep or time skip"}
+    ,{"type": "skill_check_offer", "checkType": "force|finesse|endure|discern|perceive|sway", "npcId": "optional exact existing npc id when a specific person is involved"}
   ],
   "suggestedActions": ["string", "string", "string"]
 }
@@ -906,6 +953,8 @@ Emit location_hint only when the fiction clearly gives the player a real, action
 Each entry in WORLD STATE.locations has a "connections" array — the other location ids directly reachable from it based on where the player has actually traveled before. Moving to a location already listed in the current location's connections is a short, ordinary trip — narrate it briefly. Moving to a known location that ISN'T in the current connections (somewhere the player has heard of but never traveled to directly from here) should read like a real journey — time passing, distance covered — rather than an instant unexplained jump, even though it's still a single action. Code will automatically treat any move as establishing a new direct route between the two places, so once you've narrated that journey once, future trips between them can be brief.
 
 Omit event types that don't apply this turn — an empty array is fine and common.
+
+Use skill_check_offer only when the player is about to make a genuinely uncertain, consequential attempt: persuasion or intimidation, forcing something open, picking a lock, deciphering difficult text, noticing a meaningfully hidden detail, or resisting a serious physical or mental effect. Do not use it for minor actions or ordinary choices. The governing attributes are force→STR, finesse→DEX, endure→CON, discern→INT, perceive→WIS, and sway→CHA. Emit the offer before resolving the attempt; code will ask the player how they proceed and will return authoritative SKILL CHECK FACTS on their next action. When those facts are present, narrate the stated binary pass/fail without reconsidering or grading the player's wording. On failure, always redirect with a complication, cost, or worse alternative path—never create a hard dead-end or game-over from a failed skill check. There is no partial success.
 
 For training: only emit training_offer while the player is speaking with an existing NPC whose WORLD STATE record has isTrainer true, whose trust requirement is met, and whose requested stat is listed in trainableStats and not taughtOut. Code presents the price and enforces every resource/cap check. If daily training is already exhausted, narrate that the player is too worn out and do not emit another offer. Emit day_advance whenever a full in-game day passes (sleeping, an inn stay, or a story-forced time skip); code increments the day and resets the global daily training counter.
 
@@ -1380,6 +1429,7 @@ export default function DMMemoryTest() {
   const [shop, setShop] = useState(null); // { npcId, merchantType }
   const [pendingPurchase, setPendingPurchase] = useState(null); // { reason, tier, amount }
   const [trainingOffer, setTrainingOffer] = useState(null); // { npcId, stat }
+  const [pendingSkillCheck, setPendingSkillCheck] = useState(null); // { checkType, npcId? }
   // Monotonic ID counters — refs, not state, since incrementing them shouldn't itself
   // trigger a render. Code is the only thing that ever assigns an id; Claude only ever
   // receives and echoes them back (for npc/location ids) or never sees them at all (items).
@@ -2177,6 +2227,11 @@ export default function DMMemoryTest() {
         setTrainingOffer(null);
         pushSystemLine(`☀ A new day begins${event.reason ? ` — ${event.reason}` : ""}. Training stamina restored.`);
         if ((character.injuries || []).length > 0) pushSystemLine(`+ A full rest heals your oldest injury; its scar remains.`);
+      } else if (event.type === "skill_check_offer") {
+        if (SKILL_CHECK_TYPES[event.checkType]) {
+          const npcId = event.npcId && worldState.npcs.some((npc) => npc.id === event.npcId) ? event.npcId : null;
+          setPendingSkillCheck({ checkType: event.checkType, npcId });
+        }
       }
     });
   }
@@ -2229,11 +2284,19 @@ export default function DMMemoryTest() {
     setLog((l) => [...l, { role: "player", text: action }]);
     setInput("");
 
+    const offeredCheck = pendingSkillCheck;
+    const odds = offeredCheck ? skillCheckOdds(offeredCheck, worldState, character) : null;
+    const skillCheckFacts = odds ? {
+      passed: Math.random() * 100 < odds.chance,
+      checkType: offeredCheck.checkType,
+      difficultyTier: odds.difficultyTier,
+      ...(offeredCheck.npcId ? { npcId: offeredCheck.npcId } : {}),
+    } : null;
     const userMessage = `WORLD STATE:\n${JSON.stringify(worldState, null, 2)}\n\nCHARACTER SUMMARY (for narrative color only — do not cite numbers):\n${JSON.stringify(
       characterSummaryForPrompt(character, quests),
       null,
       2
-    )}\n\nPLAYER ACTION: ${action}`;
+    )}${skillCheckFacts ? `\n\nSKILL CHECK FACTS (authoritative code-owned result; the player's prose is flavor only):\n${JSON.stringify(skillCheckFacts, null, 2)}` : ""}\n\nPLAYER ACTION: ${action}`;
 
     try {
       const result = await callModel(EXPLORATION_SYSTEM_PROMPT, userMessage, 1200, 1, null, (info) => pushDebugEntry(action, info));
@@ -2355,6 +2418,10 @@ export default function DMMemoryTest() {
         return next;
       });
 
+      if (offeredCheck) {
+        setPendingSkillCheck(null);
+        pushSystemLine(`${skillCheckFacts.passed ? "✓" : "✗"} ${odds.check.label} check ${skillCheckFacts.passed ? "passed" : "failed"} (${odds.chance}% chance · ${odds.difficultyTier.toUpperCase()})`);
+      }
       setLog((l) => [...l, { role: "dm", narration, suggestedActions }]);
       processEvents(events);
       setLastFailedAction(null);
@@ -2702,7 +2769,7 @@ export default function DMMemoryTest() {
                   )}
                   {rest}
                 </p>
-                {entry.suggestedActions && (
+                {entry.suggestedActions && !pendingSkillCheck && (
                   <div style={{ marginTop: "14px", display: "flex", flexWrap: "wrap", gap: "8px" }}>
                     {entry.suggestedActions.map((a, j) => (
                       <button key={j} onClick={() => submitAction(a)} disabled={loading || !!combat || !!shop || !!pendingPurchase || !!trainingOffer} style={{ background: "linear-gradient(180deg, #241D15 0%, #1A150F 100%)", border: "1px solid #4A3F2C", color: INK, padding: "7px 14px", fontFamily: DISPLAY_FONT, fontSize: "11.5px", letterSpacing: "0.03em", cursor: loading || combat || shop || pendingPurchase || trainingOffer ? "default" : "pointer", opacity: loading || combat || shop || pendingPurchase || trainingOffer ? 0.5 : 1, borderRadius: "2px" }}>
@@ -2830,7 +2897,13 @@ export default function DMMemoryTest() {
           )}
         </div>
 
-        <form onSubmit={(e) => { e.preventDefault(); submitAction(input); }} style={{ display: "flex", borderTop: "1px solid #33291D", padding: "12px 16px", gap: "10px" }}>
+        {pendingSkillCheck && (() => {
+          const odds = skillCheckOdds(pendingSkillCheck, worldState, character);
+          return odds && <div style={{ borderTop: "1px solid #33291D", padding: "10px 16px 0", color: CODE_VOICE, fontFamily: DISPLAY_FONT, fontSize: "12px", letterSpacing: "0.04em" }}>
+            {odds.check.label} check — {odds.chance}% likely to land <span style={{ color: DIM }}>· {odds.difficultyTier} difficulty</span>
+          </div>;
+        })()}
+        <form onSubmit={(e) => { e.preventDefault(); submitAction(input); }} style={{ display: "flex", borderTop: pendingSkillCheck ? "none" : "1px solid #33291D", padding: "12px 16px", gap: "10px" }}>
           <input value={input} onChange={(e) => setInput(e.target.value)} placeholder={combat ? "Resolve combat above first..." : shop ? "Finish trading above first..." : pendingPurchase ? "Answer the purchase prompt above first..." : trainingOffer ? "Answer the training offer above first..." : "What do you do?"} disabled={loading || !!combat || !!shop || !!pendingPurchase || !!trainingOffer} style={{ flex: 1, background: "#1A1611", border: "1px solid #33291D", color: INK, padding: "10px 12px", fontFamily: BODY_FONT, fontSize: "15px", outline: "none", opacity: combat || shop || pendingPurchase || trainingOffer ? 0.4 : 1, borderRadius: "2px" }} />
           <button type="submit" disabled={loading || !!combat || !!shop || !!pendingPurchase || !!trainingOffer} style={{ background: `linear-gradient(180deg, ${BLOOD} 0%, #4A1620 100%)`, border: `1px solid ${BLOOD}`, color: INK, padding: "10px 20px", fontFamily: DISPLAY_FONT, fontSize: "12.5px", letterSpacing: "0.06em", textTransform: "uppercase", cursor: loading || combat || shop || pendingPurchase || trainingOffer ? "default" : "pointer", opacity: loading || combat || shop || pendingPurchase || trainingOffer ? 0.5 : 1, borderRadius: "2px" }}>
             Act
