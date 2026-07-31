@@ -209,9 +209,9 @@ const CONSUMABLE_TABLE = {
 const EQUIPMENT_TABLE = {
   rusty_dagger: { slot: "weapon", atkBonus: 1 },
   steel_dagger: { slot: "weapon", atkBonus: 2 },
-  iron_sword: { slot: "weapon", atkBonus: 3 },
+  iron_sword: { slot: "weapon", atkBonus: 3, strRequired: 8 },
   silver_rapier: { slot: "weapon", atkBonus: 3 },
-  war_axe: { slot: "weapon", atkBonus: 4 },
+  war_axe: { slot: "weapon", atkBonus: 4, strRequired: 14 },
   oak_staff: { slot: "weapon", atkBonus: 2 },
   robes: { slot: "armor", defBonus: 1 },
   leather_armor: { slot: "armor", defBonus: 2 },
@@ -221,11 +221,11 @@ const EQUIPMENT_TABLE = {
   // same as rusty_dagger — picking a spear over a sword is a flavor choice, not a power
   // choice, so no starting weapon type is objectively better than another.
   starting_sword: { slot: "weapon", atkBonus: 1 },
-  starting_axe: { slot: "weapon", atkBonus: 1 },
-  starting_spear: { slot: "weapon", atkBonus: 1 },
+  starting_axe: { slot: "weapon", atkBonus: 1, strRequired: 8 },
+  starting_spear: { slot: "weapon", atkBonus: 1, strRequired: 6 },
   starting_bow: { slot: "weapon", atkBonus: 1 },
   starting_staff: { slot: "weapon", atkBonus: 1 },
-  starting_hammer: { slot: "weapon", atkBonus: 1 },
+  starting_hammer: { slot: "weapon", atkBonus: 1, strRequired: 12 },
 };
 
 // ---- Attribute system. Six primary attributes drive every derived combat/social number.
@@ -527,12 +527,15 @@ function getEffectiveStats(character) {
   const armorBonus = armorDef ? Math.round(armorDef.defBonus * armorRarityMult) : 0;
   const unlocked = getUnlockedAbilities(effectiveAttributes);
   const has = (key) => unlocked.some((a) => a.key === key);
+  const baseAccuracy = clamp(70 + effectiveAttributes.dex * 0.5, 40, 95);
+  const strengthShortfall = Math.max(0, (weaponDef?.strRequired || 0) - effectiveAttributes.str);
   return {
     atk: base.attack + weaponBonus,
     def: base.defense + armorBonus + (has("iron_will") ? 2 : 0),
     maxHp: base.maxHp,
     critChance: base.critChance,
     dodgeChance: base.dodgeChance,
+    accuracy: Math.max(15, baseAccuracy - strengthShortfall * 5),
     critMultiplier: has("assassination") ? 2 : 1.5,
     fleeChance: has("shadow_step") ? 0.85 : 0.6,
     hasPowerStrike: has("power_strike"),
@@ -737,23 +740,32 @@ function rollDamage(base, targetDefense) {
   return Math.max(1, base + variance - Math.floor(targetDefense / 2));
 }
 
+function hitChanceFor(attackerAccuracy, defenderEvasion) {
+  return clamp(attackerAccuracy - defenderEvasion, 0, 100);
+}
+
 // DEX-driven dodge: rolled once per incoming hit, independent of the damage roll itself.
-// A dodge means the attack lands but does nothing — still worth narrating as a real near
-// miss, not silence.
-function rollIncomingHit(enemyAttack, defenseTotal, dodgeChancePercent) {
-  if (Math.random() * 100 < dodgeChancePercent) {
-    return { dmg: 0, dodged: true };
+// Accuracy is rolled first; only an attack that lands can subsequently be dodged.
+function rollIncomingHit(enemyAttack, defenseTotal, dodgeChancePercent, hitChancePercent) {
+  if (Math.random() * 100 >= hitChancePercent) {
+    return { dmg: 0, dodged: false, missed: true };
   }
-  return { dmg: rollDamage(enemyAttack, defenseTotal), dodged: false };
+  if (Math.random() * 100 < dodgeChancePercent) {
+    return { dmg: 0, dodged: true, missed: false };
+  }
+  return { dmg: rollDamage(enemyAttack, defenseTotal), dodged: false, missed: false };
 }
 
 // DEX-driven critical hits: a flat 1.5x multiplier on an already-rolled damage number,
 // rather than its own separate roll — keeps one source of truth for "how hard did this
 // swing land" instead of two competing damage formulas.
-function rollOutgoingHit(atk, enemyDefense, critChancePercent, critMultiplier = 1.5) {
+function rollOutgoingHit(atk, enemyDefense, critChancePercent, hitChancePercent, critMultiplier = 1.5) {
+  if (Math.random() * 100 >= hitChancePercent) {
+    return { dmg: 0, crit: false, missed: true };
+  }
   const dmg = rollDamage(atk, enemyDefense);
   const crit = Math.random() * 100 < critChancePercent;
-  return { dmg: crit ? Math.round(dmg * critMultiplier) : dmg, crit };
+  return { dmg: crit ? Math.round(dmg * critMultiplier) : dmg, crit, missed: false };
 }
 
 function rollGoldForTier(tier) {
@@ -862,7 +874,7 @@ const COMBAT_NARRATION_SYSTEM_PROMPT = `You are narrating one exchange of combat
 
 CRITICAL: Do not invent a different outcome, different damage, or different result than what's given. You are describing what already happened, not deciding it.
 
-The facts may include "playerCrit": true (the player's attack landed as a solid, exceptional hit — narrate it as such) or "playerDodged": true (an incoming attack was cleanly evaded and dealt no damage at all — narrate an actual dodge, not just a graze). They may also include "powerStrike": true (the player committed to an unusually heavy, all-in blow — narrate bigger wind-up and impact, and note they're left a little exposed), "secondWindHeal": a number (the player caught a genuine second wind and recovered that much health mid-fight — narrate a real moment of resilience, not a minor breather), or "enemyFled": true (the enemy's nerve broke entirely and they ran — this is NOT a defeat, narrate them escaping alive, rattled). If "playerDied" is true, narrate an unambiguous death. If "injuryArea" is present, make the surviving wound fit that fixed body area.
+The facts may include "playerMissed": true (the player's attack failed to connect), "enemyMissed": true (the enemy's attack failed to connect), "playerCrit": true (the player's attack landed as a solid, exceptional hit — narrate it as such), or "playerDodged": true (an incoming attack was cleanly evaded and dealt no damage at all — narrate an actual dodge, not just a graze). They may also include "powerStrike": true (the player committed to an unusually heavy, all-in blow — narrate bigger wind-up and impact, and note they're left a little exposed), "secondWindHeal": a number (the player caught a genuine second wind and recovered that much health mid-fight — narrate a real moment of resilience, not a minor breather), or "enemyFled": true (the enemy's nerve broke entirely and they ran — this is NOT a defeat, narrate them escaping alive, rattled). If "playerDied" is true, narrate an unambiguous death. If "injuryArea" is present, make the surviving wound fit that fixed body area.
 
 Respond with ONLY valid JSON: {"narration": "string"}`;
 
@@ -2304,15 +2316,18 @@ export default function DMMemoryTest() {
     // Always fight with gear-adjusted stats, never the raw base numbers — this is the
     // only place attack/defense bonuses from equipped items take effect.
     const effStats = getEffectiveStats(nextCharacter);
+    const playerHitChance = hitChanceFor(effStats.accuracy, 0);
+    const enemyBaseHitChance = clamp(hitChanceFor(70, effStats.dodgeChance * 1.2), 10, 90);
 
     if (actionType === "flee") {
       const escaped = Math.random() < effStats.fleeChance;
       facts.fled = escaped;
       if (!escaped) {
-        const { dmg, dodged } = rollIncomingHit(enemy.attack, effStats.def, effStats.dodgeChance);
+        const { dmg, dodged, missed } = rollIncomingHit(enemy.attack, effStats.def, effStats.dodgeChance, enemyBaseHitChance);
         nextCharacter.hp = Math.max(0, nextCharacter.hp - dmg);
         facts.enemyDamageDealt = dmg;
         facts.playerDodged = dodged;
+        facts.enemyMissed = missed;
         facts.playerHpRemaining = nextCharacter.hp;
       }
     } else if (actionType === "second_wind") {
@@ -2323,10 +2338,11 @@ export default function DMMemoryTest() {
         nextCharacter.hp += healAmt;
         facts.secondWindHeal = healAmt;
       }
-      const { dmg, dodged } = rollIncomingHit(enemy.attack, effStats.def, effStats.dodgeChance);
+      const { dmg, dodged, missed } = rollIncomingHit(enemy.attack, effStats.def, effStats.dodgeChance, enemyBaseHitChance);
       nextCharacter.hp = Math.max(0, nextCharacter.hp - dmg);
       facts.enemyDamageDealt = dmg;
       facts.playerDodged = dodged;
+      facts.enemyMissed = missed;
       facts.playerHpRemaining = nextCharacter.hp;
     } else {
       const incomingDefenseBonus = actionType === "defend" ? Math.floor(effStats.def / 2) + 3 : 0;
@@ -2335,25 +2351,29 @@ export default function DMMemoryTest() {
       const isPowerStrike = actionType === "power_strike" && effStats.hasPowerStrike;
       if (actionType === "attack" || isPowerStrike) {
         const atk = isPowerStrike ? Math.round(effStats.atk * 1.6) : effStats.atk;
-        const { dmg, crit } = rollOutgoingHit(atk, enemy.defense, effStats.critChance, effStats.critMultiplier);
+        const attackHitChance = isPowerStrike ? Math.max(15, playerHitChance - 20) : playerHitChance;
+        const { dmg, crit, missed } = rollOutgoingHit(atk, enemy.defense, effStats.critChance, attackHitChance, effStats.critMultiplier);
         enemy.hp = Math.max(0, enemy.hp - dmg);
         facts.playerDamageDealt = dmg;
         facts.playerCrit = crit;
+        facts.playerMissed = missed;
         facts.powerStrike = isPowerStrike;
         facts.enemyHpRemaining = enemy.hp;
       }
       facts.enemyDefeated = enemy.hp <= 0;
       // Intimidating Presence: only ever checked after the player's own attack actually
       // lands and doesn't finish the enemy off — a weaker foe may just break and run.
-      if (!facts.enemyDefeated && (actionType === "attack" || isPowerStrike) && effStats.hasIntimidatingPresence) {
+      if (!facts.enemyDefeated && !facts.playerMissed && (actionType === "attack" || isPowerStrike) && effStats.hasIntimidatingPresence) {
         facts.enemyFled = Math.random() < 0.2;
       }
       if (!facts.enemyDefeated && !facts.enemyFled) {
         const openDefense = isPowerStrike ? Math.floor(effStats.def / 2) : effStats.def + incomingDefenseBonus;
-        const { dmg, dodged } = rollIncomingHit(enemy.attack, openDefense, effStats.dodgeChance);
+        const enemyHitChance = actionType === "defend" ? hitChanceFor(enemyBaseHitChance, 15) : enemyBaseHitChance;
+        const { dmg, dodged, missed } = rollIncomingHit(enemy.attack, openDefense, effStats.dodgeChance, enemyHitChance);
         nextCharacter.hp = Math.max(0, nextCharacter.hp - dmg);
         facts.enemyDamageDealt = dmg;
         facts.playerDodged = dodged;
+        facts.enemyMissed = missed;
         facts.playerHpRemaining = nextCharacter.hp;
       }
     }
@@ -2464,6 +2484,13 @@ export default function DMMemoryTest() {
   }
 
   const characterEffStats = getEffectiveStats(character);
+  const combatPlayerHitChance = hitChanceFor(characterEffStats.accuracy, 0);
+  const combatEnemyHitChance = clamp(hitChanceFor(70, characterEffStats.dodgeChance * 1.2), 10, 90);
+  const combatActionLabels = {
+    attack: `Attack (${combatPlayerHitChance.toFixed(0)}%)`,
+    defend: `Defend (avoid dmg: ${hitChanceFor(100, combatEnemyHitChance - 15).toFixed(0)}%)`,
+    flee: `Flee (${(characterEffStats.fleeChance * 100).toFixed(0)}%)`,
+  };
   const shopNpc = shop ? worldState.npcs.find((n) => n.id === shop.npcId) : null;
   const trainingNpc = trainingOffer ? worldState.npcs.find((n) => n.id === trainingOffer.npcId) : null;
 
@@ -2640,12 +2667,12 @@ export default function DMMemoryTest() {
               <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
                 {["attack", "defend", "flee"].map((a) => (
                   <button key={a} onClick={() => handleCombatAction(a)} disabled={loading} style={{ background: a === "attack" ? `linear-gradient(180deg, ${BLOOD} 0%, #4A1620 100%)` : "linear-gradient(180deg, #241D15 0%, #1A150F 100%)", border: `1px solid ${a === "attack" ? BLOOD : "#4A3F2C"}`, color: INK, padding: "9px 18px", fontFamily: DISPLAY_FONT, fontSize: "12.5px", letterSpacing: "0.05em", textTransform: "uppercase", cursor: loading ? "default" : "pointer", opacity: loading ? 0.5 : 1, borderRadius: "2px" }}>
-                    {a}
+                    {combatActionLabels[a]}
                   </button>
                 ))}
                 {characterEffStats.hasPowerStrike && (
                   <button onClick={() => handleCombatAction("power_strike")} disabled={loading} title="More damage, but a weaker guard on the counter" style={{ background: "linear-gradient(180deg, #5A2A12 0%, #2E1608 100%)", border: `1px solid ${AMBER}`, color: INK, padding: "9px 18px", fontFamily: DISPLAY_FONT, fontSize: "12.5px", letterSpacing: "0.05em", textTransform: "uppercase", cursor: loading ? "default" : "pointer", opacity: loading ? 0.5 : 1, borderRadius: "2px" }}>
-                    Power Strike
+                    Power Strike ({Math.max(15, combatPlayerHitChance - 20).toFixed(0)}%)
                   </button>
                 )}
                 {characterEffStats.hasSecondWind && !combat.secondWindUsed && (
