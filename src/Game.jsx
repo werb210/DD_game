@@ -401,6 +401,61 @@ const BACKGROUND_OPTIONS = {
   urchin: { label: "Street Urchin", bonus: { dex: 2, con: 1 }, flavor: "You grew up fast, and learned to go hungry without complaint.", npcTag: "Beggars and street folk trust you as one of their own.", startingItem: { name: "Rations", consumableKind: "ration", equipmentKey: null } },
 };
 
+// Formative memories are narrative color only. Their trait nudges are deliberately
+// kept separate from race/background selection and every other mechanical gate.
+const FORMATIVE_MEMORY_QUESTIONS = [
+  {
+    id: "childhood_bully",
+    prompt: "A bully corners your younger sibling. What do you do?",
+    options: [
+      { label: "Step in and fight, even outnumbered", traits: { aggression: 2 } },
+      { label: "Run to get an adult", traits: { discipline: 1, empathy: 1 } },
+      { label: "Talk the bully down", traits: { empathy: 2 } },
+      { label: "Watch closely, ready to act if it gets bad", traits: { curiosity: 1, discipline: 1 } },
+    ],
+  },
+  {
+    id: "adolescent_find",
+    prompt: "You find something valuable that isn't yours.",
+    options: [
+      { label: "Keep it — finders keepers", traits: { ambition: 2 } },
+      { label: "Try to find the owner", traits: { empathy: 2 } },
+      { label: "Sell it quietly, no questions", traits: { ambition: 1, aggression: 1 } },
+      { label: "Turn it in to someone in authority", traits: { discipline: 2 } },
+    ],
+  },
+  {
+    id: "trusted_lie",
+    prompt: "Someone you trusted lies to you.",
+    options: [
+      { label: "Confront them immediately, no matter the cost", traits: { aggression: 2 } },
+      { label: "Quietly distance yourself, no confrontation", traits: { discipline: 2 } },
+      { label: "Try to understand why they lied", traits: { empathy: 1, curiosity: 1 } },
+      { label: "Use it against them later, when it's useful", traits: { ambition: 2 } },
+    ],
+  },
+  {
+    id: "formative_risk",
+    prompt: "A dangerous opportunity presents itself — real reward, real risk.",
+    options: [
+      { label: "Take it without hesitation", traits: { curiosity: 2, aggression: 1 } },
+      { label: "Plan carefully before acting", traits: { discipline: 2 } },
+      { label: "Pass — not worth the risk", traits: { discipline: 1, empathy: 1 } },
+      { label: "Take it, but bring others in on the reward", traits: { ambition: 1, empathy: 1 } },
+    ],
+  },
+  {
+    id: "leaving_home",
+    prompt: "The night before leaving home — what do you actually want, if you're honest with yourself?",
+    options: [
+      { label: "To be remembered", traits: { ambition: 2 } },
+      { label: "To understand the world", traits: { curiosity: 2 } },
+      { label: "To protect the people I care about", traits: { empathy: 2 } },
+      { label: "To never answer to anyone again", traits: { aggression: 1, ambition: 1 } },
+    ],
+  },
+];
+
 // Starting weapon is a pure flavor/playstyle choice at creation — every option maps to
 // an atkBonus: 1 equipment entry, so nothing here is a power pick, just a preference.
 const STARTING_WEAPON_OPTIONS = {
@@ -622,6 +677,8 @@ const initialCharacter = {
   hp: 30,
   attributes: { ...initialAttributes },
   identity: null, // { name, race, background, backstory, gender, age, appearance, weapon, voice } — set once at character creation
+  traits: null, // hidden formative-memory narrative context; never used as a mechanical gate
+  formativeAnswers: null,
   gold: 10,
   xp: 0,
   bankedSkillPoints: 0,
@@ -804,6 +861,8 @@ You'll receive the current WORLD STATE, CHARACTER SUMMARY (level/rough HP status
 If CHARACTER SUMMARY includes "notableTraits" (e.g. "Strength: Skilled"), feel free to let those color your narration when relevant — a strong character might force a door, a perceptive one might notice something others miss — but never state the underlying number, and never let a trait's absence mean the player categorically fails at something; these are flavor, not hard gates. The same goes for "narrativeAbilities" (e.g. "Keen Analysis: You notice details others miss") — weave them in when they fit the scene, but they're color, not permission or denial for anything mechanical.
 
 CHARACTER SUMMARY also includes "name", "race", "background", "backgroundNote", "gender", "age", "appearance", "voice", and "backstory". Use the player's name naturally sometimes (NPCs addressing them, narration referencing them) — but don't force it into every paragraph, and second person ("you") is still your default voice. Race, background, gender, age, and appearance are flavor for physical description and reputation, never a mechanical gate (an Elf isn't secretly better at anything the numbers don't already say, and a Noble isn't guaranteed a warm welcome everywhere). "backgroundNote" is a recognition cue (e.g. a Farmer's "villagers warm to you quickly") — let it surface when a scene plausibly involves people who'd notice, not every scene. "voice" (e.g. "Rough", "Noble") should color how the player's own manner and implied dialogue read, not how NPCs speak. Treat "backstory" as established, private history — you can have it surface in the world (a stranger who recognizes something about them, a rumor that fits) but never contradict it, and never expose details the player hasn't chosen to share in-fiction just because you know them.
+
+"formativeTraits" and "formativeAnswers" describe private memories and instinctive tendencies. Let them subtly color reactions and narration, but never mention their numbers, reveal the answers as a ledger, restrict or remove suggested actions, or treat them as mechanical permission, success, or failure.
 
 IMPORTANT — identity: WORLD STATE gives every NPC a stable "id" (e.g. "npc_3") and every known place a stable id inside "locations" (e.g. "loc_2"). Whenever you reference an EXISTING NPC or place in structured fields (npcUpdates, npc_relationship, shop_open, or moving to a known location), you MUST use that exact id — never their name or a paraphrase of the place. Names and display text can vary in your prose however you like; ids must be copied exactly. Only omit an id when you are introducing someone or somewhere brand new, since code assigns the id for anything new.
 
@@ -1292,6 +1351,8 @@ function characterSummaryForPrompt(character, quests) {
     appearance: character.identity?.appearance || null,
     voice: character.identity?.voice || null,
     backstory: character.identity?.backstory || null,
+    formativeTraits: character.traits || null,
+    formativeAnswers: character.formativeAnswers || null,
     startingRegion: character.startingRegion || null,
     regionalPassive: character.regionalPassive || null,
     level: character.level,
@@ -1664,24 +1725,25 @@ export default function DMMemoryTest() {
   }
 
   function submitIdentity(identity) {
+    const { traits, formativeAnswers, ...identityDetails } = identity;
     if (identityMode === "new") {
-      const startingRegion = rollStartingRegion(identity.race);
+      const startingRegion = rollStartingRegion(identityDetails.race);
       const regionalPassive = { ...REGIONS_TABLE[startingRegion].passiveAbility };
-      const identityWithRegion = { ...identity, startingRegion, regionalPassive };
-      const background = BACKGROUND_OPTIONS[identity.background] || BACKGROUND_OPTIONS.farmer;
+      const identityWithRegion = { ...identityDetails, startingRegion, regionalPassive };
+      const background = BACKGROUND_OPTIONS[identityDetails.background] || BACKGROUND_OPTIONS.farmer;
       const startingAttributes = { ...initialAttributes };
       Object.entries(background.bonus).forEach(([key, amount]) => {
         startingAttributes[key] = Math.min(ATTRIBUTE_CAP, startingAttributes[key] + amount);
       });
       const startingGold = 10 + (background.startingGold || 0);
-      const startingInventory = buildStartingInventory(identity.weapon, identity.background);
-      setCharacter({ ...initialCharacter, attributes: startingAttributes, gold: startingGold, inventory: startingInventory, identity: identityWithRegion, startingRegion, regionalPassive });
+      const startingInventory = buildStartingInventory(identityDetails.weapon, identityDetails.background);
+      setCharacter({ ...initialCharacter, attributes: startingAttributes, gold: startingGold, inventory: startingInventory, identity: identityWithRegion, traits, formativeAnswers, startingRegion, regionalPassive });
       const startingLocationId = REGIONS_TABLE[startingRegion].hubSettlement;
       setWorldState((world) => ({ ...world, day: 1, locationId: startingLocationId, locations: cloneWorldMap(startingLocationId) }));
       setLog([craftOpeningNarration(identityWithRegion, startingRegion)]);
     } else {
-      setCharacter((c) => ({ ...c, identity }));
-      pushSystemLine(`✎ ${identity.name} — the story continues.`);
+      setCharacter((c) => ({ ...c, identity: identityDetails, traits, formativeAnswers }));
+      pushSystemLine(`✎ ${identityDetails.name} — the story continues.`);
     }
     setNeedsIdentity(false);
   }
@@ -3103,11 +3165,13 @@ function CharacterCreationScreen({ mode, onSubmit }) {
   const [appearance, setAppearance] = useState("");
   const [race, setRace] = useState(null);
   const [background, setBackground] = useState(null);
+  const [formativeSelections, setFormativeSelections] = useState({});
   const [weapon, setWeapon] = useState("dagger");
   const [voice, setVoice] = useState(null);
   const [backstory, setBackstory] = useState("");
 
-  const canSubmit = name.trim().length > 0 && race && background;
+  const allMemoriesAnswered = FORMATIVE_MEMORY_QUESTIONS.every((question) => formativeSelections[question.id] !== undefined);
+  const canSubmit = name.trim().length > 0 && race && background && allMemoriesAnswered;
   const GENDER_OPTIONS = ["Male", "Female", "Nonbinary", "Prefer not to say"];
 
   function fieldLabel(text) {
@@ -3225,7 +3289,24 @@ function CharacterCreationScreen({ mode, onSubmit }) {
           )}
         </div>
 
-        {mode !== "migrate" && (
+        <div style={{ marginBottom: "22px" }}>
+          {fieldLabel("Formative Memories")}
+          {FORMATIVE_MEMORY_QUESTIONS.map((question) => (
+            <div key={question.id} style={{ marginBottom: "16px" }}>
+              <div style={{ color: INK, fontSize: "13.5px", marginBottom: "8px", lineHeight: 1.5 }}>{question.prompt}</div>
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                {question.options.map((option, optionIndex) => pillButton(
+                  `${question.id}-${optionIndex}`,
+                  option.label,
+                  formativeSelections[question.id] === optionIndex,
+                  () => setFormativeSelections((current) => ({ ...current, [question.id]: optionIndex }))
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {mode !== "migrate" && allMemoriesAnswered && (
           <div style={{ marginBottom: "22px" }}>
             {fieldLabel("Starting Weapon")}
             <div style={{ display: "flex", gap: "12px", alignItems: "center", flexWrap: "wrap" }}>
@@ -3256,7 +3337,15 @@ function CharacterCreationScreen({ mode, onSubmit }) {
         </div>
 
         <button
-          onClick={() => onSubmit({ name: name.trim(), gender, age: age.trim(), appearance: appearance.trim(), race, background, weapon, voice, backstory: backstory.trim() })}
+          onClick={() => {
+            const traits = { aggression: 0, empathy: 0, discipline: 0, curiosity: 0, ambition: 0 };
+            const formativeAnswers = FORMATIVE_MEMORY_QUESTIONS.map((question) => {
+              const option = question.options[formativeSelections[question.id]];
+              Object.entries(option.traits).forEach(([trait, amount]) => { traits[trait] += amount; });
+              return option.label;
+            });
+            onSubmit({ name: name.trim(), gender, age: age.trim(), appearance: appearance.trim(), race, background, weapon, voice, backstory: backstory.trim(), traits, formativeAnswers });
+          }}
           disabled={!canSubmit}
           style={{ background: canSubmit ? `linear-gradient(180deg, ${BLOOD} 0%, #4A1620 100%)` : "transparent", border: `1px solid ${canSubmit ? BLOOD : "#4A3F2C"}`, color: canSubmit ? INK : DIM, padding: "12px 24px", fontFamily: DISPLAY_FONT, fontSize: "13px", letterSpacing: "0.05em", textTransform: "uppercase", cursor: canSubmit ? "pointer" : "default", borderRadius: "2px", width: "100%" }}
         >
