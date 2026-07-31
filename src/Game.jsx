@@ -1430,6 +1430,7 @@ export default function DMMemoryTest() {
   const [pendingPurchase, setPendingPurchase] = useState(null); // { reason, tier, amount }
   const [trainingOffer, setTrainingOffer] = useState(null); // { npcId, stat }
   const [pendingSkillCheck, setPendingSkillCheck] = useState(null); // { checkType, npcId? }
+  const [ledgerTab, setLedgerTab] = useState("stats");
   // Monotonic ID counters — refs, not state, since incrementing them shouldn't itself
   // trigger a render. Code is the only thing that ever assigns an id; Claude only ever
   // receives and echoes them back (for npc/location ids) or never sees them at all (items).
@@ -2916,6 +2917,27 @@ export default function DMMemoryTest() {
           <RavenGlyph size={14} /> Character Ledger <span style={{ color: DIM, textTransform: "none", letterSpacing: 0, fontFamily: "ui-monospace, monospace", fontSize: "10px" }}>(code-owned)</span>
         </div>
 
+        <style>{`
+          .ledger-tabs { display: flex; flex-wrap: wrap; gap: 5px; margin: -4px 0 18px; }
+          .ability-branches { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+          @media (max-width: 640px) { .ability-branches { grid-template-columns: 1fr; } }
+        `}</style>
+        <nav className="ledger-tabs" aria-label="Character ledger sections">
+          {["stats", "skills", "magic", "inventory", "quests", "world"].map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              onClick={() => setLedgerTab(tab)}
+              aria-current={ledgerTab === tab ? "page" : undefined}
+              style={{ background: ledgerTab === tab ? "#2A2117" : "transparent", border: `1px solid ${ledgerTab === tab ? AMBER : "#4A3F2C"}`, color: ledgerTab === tab ? AMBER : SLATE, padding: "5px 9px", fontFamily: DISPLAY_FONT, fontSize: "10px", letterSpacing: "0.05em", textTransform: "uppercase", cursor: "pointer" }}
+            >
+              {tab}
+            </button>
+          ))}
+        </nav>
+
+        {ledgerTab === "stats" && <>
+
         {character.identity && (
           <LedgerSection title="Identity">
             <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
@@ -2947,11 +2969,6 @@ export default function DMMemoryTest() {
         <LedgerSection title="Level & HP">
           <div style={{ color: INK }}>
             Level {character.level}
-            {character.bankedSkillPoints > 0 && (
-              <span style={{ color: CODE_VOICE, fontSize: "10.5px", marginLeft: "8px" }}>
-                ★ {character.bankedSkillPoints} skill point{character.bankedSkillPoints > 1 ? "s" : ""} banked
-              </span>
-            )}
           </div>
           <div style={{ marginTop: "4px", color: character.hp <= characterEffStats.maxHp * 0.3 ? WOUND : INK, display: "flex", alignItems: "center", gap: "6px" }}>
             <PixelSprite src={heartIcon} alt="" size={18} /> HP {character.hp} / {characterEffStats.maxHp}
@@ -2968,12 +2985,6 @@ export default function DMMemoryTest() {
           <div style={{ marginTop: "4px" }}>
             <StatBar value={character.xp} max={xpToNextLevel(character.level)} color={AMBER} height={5} />
           </div>
-        </LedgerSection>
-
-        <LedgerSection title="Training">
-          <div style={{ color: INK }}>Banked skill points: <span style={{ color: AMBER }}>{character.bankedSkillPoints || 0}</span></div>
-          <div style={{ color: CODE_VOICE, marginTop: "3px" }}>Training: {character.dailyTrainingUsed || 0}/{character.dailyTrainingCap || DAILY_TRAINING_CAP} today</div>
-          <div style={{ color: DIM, fontSize: "10.5px", marginTop: "3px" }}>Day {worldState.day || 1} · {(character.dailyTrainingCap || DAILY_TRAINING_CAP) - (character.dailyTrainingUsed || 0)} session(s) remaining</div>
         </LedgerSection>
 
         <LedgerSection title="Attributes">
@@ -3003,22 +3014,46 @@ export default function DMMemoryTest() {
             ))}
           </LedgerSection>
         )}
+        </>}
 
-        <LedgerSection title={`Abilities (${characterEffStats.abilities.length}/${Object.values(ABILITY_TABLE).flat().length})`}>
-          {Object.entries(ABILITY_TABLE).map(([attrKey, abilities]) =>
-            abilities.map((a) => {
-              const unlocked = character.attributes[attrKey] >= a.min;
-              return (
-                <div key={a.key} style={{ marginBottom: "8px", opacity: unlocked ? 1 : 0.5 }}>
-                  <div style={{ color: unlocked ? (a.mechanical ? CODE_VOICE : AMBER) : DIM, fontSize: "12px" }}>
-                    {unlocked ? "●" : "○"} {a.label} <span style={{ color: SLATE, fontSize: "10px" }}>({ATTRIBUTE_DEFS[attrKey].short} {a.min})</span>
+        {ledgerTab === "skills" && <>
+          <LedgerSection title="Training">
+            <div style={{ color: INK }}>Banked skill points: <span style={{ color: AMBER }}>{character.bankedSkillPoints || 0}</span></div>
+            <div style={{ color: CODE_VOICE, marginTop: "3px" }}>Training: {character.dailyTrainingUsed || 0}/{character.dailyTrainingCap || DAILY_TRAINING_CAP} today</div>
+            <div style={{ color: DIM, fontSize: "10.5px", marginTop: "3px" }}>Day {worldState.day || 1} · {(character.dailyTrainingCap || DAILY_TRAINING_CAP) - (character.dailyTrainingUsed || 0)} session(s) remaining</div>
+          </LedgerSection>
+          <LedgerSection title={`Abilities (${characterEffStats.abilities.length}/${Object.values(ABILITY_TABLE).flat().length})`}>
+            <div className="ability-branches">
+              {Object.entries(ABILITY_TABLE).map(([attrKey, abilities]) => (
+                <div key={attrKey}>
+                  <div style={{ color: AMBER, fontFamily: DISPLAY_FONT, fontSize: "11px", marginBottom: "8px", letterSpacing: "0.08em" }}>{ATTRIBUTE_DEFS[attrKey].short}</div>
+                  <div style={{ borderLeft: "1px solid #4A3F2C", marginLeft: "5px", paddingLeft: "12px" }}>
+                    {[...abilities].sort((a, b) => a.min - b.min).map((a) => {
+                      const unlocked = character.attributes[attrKey] >= a.min;
+                      return (
+                        <div key={a.key} style={{ position: "relative", marginBottom: "10px", opacity: unlocked ? 1 : 0.5 }}>
+                          <span aria-hidden="true" style={{ position: "absolute", left: "-13px", top: "7px", width: "9px", borderTop: "1px solid #4A3F2C" }} />
+                          <div style={{ color: unlocked ? (a.mechanical ? CODE_VOICE : AMBER) : DIM, fontSize: "12px" }}>
+                            {unlocked ? "●" : "○"} {a.label} <span style={{ color: SLATE, fontSize: "10px" }}>({ATTRIBUTE_DEFS[attrKey].short} {a.min})</span>
+                          </div>
+                          <div style={{ color: SLATE, fontSize: "10.5px", paddingLeft: "14px" }}>{a.description}</div>
+                        </div>
+                      );
+                    })}
                   </div>
-                  <div style={{ color: SLATE, fontSize: "10.5px", paddingLeft: "14px" }}>{a.description}</div>
                 </div>
-              );
-            })
-          )}
-        </LedgerSection>
+              ))}
+            </div>
+          </LedgerSection>
+        </>}
+
+        {ledgerTab === "magic" && (
+          <LedgerSection title="Magic">
+            <div style={{ color: SLATE }}>The path of magic has not yet been unlocked.</div>
+          </LedgerSection>
+        )}
+
+        {ledgerTab === "inventory" && <>
 
         <LedgerSection title="Gold">
           <div style={{ color: AMBER, display: "flex", alignItems: "center", gap: "6px" }}><PixelSprite src={coinIcon} alt="" size={20} /> {character.gold}g</div>
@@ -3113,7 +3148,9 @@ export default function DMMemoryTest() {
             })
           )}
         </LedgerSection>
+        </>}
 
+        {ledgerTab === "quests" && (
         <LedgerSection title={<span style={{ display: "flex", alignItems: "center", gap: "6px" }}><PixelSprite src={scrollIcon} alt="" size={18} /> Quests ({quests.length})</span>}>
           {quests.length === 0 ? (
             <div style={{ color: DIM }}>none yet</div>
@@ -3126,7 +3163,9 @@ export default function DMMemoryTest() {
             ))
           )}
         </LedgerSection>
+        )}
 
+        {ledgerTab === "world" && <>
         <div style={{ borderTop: `2px solid #33291D`, boxShadow: `0 -1px 0 rgba(200,155,74,0.25)`, margin: "20px 0 18px", paddingTop: "16px", fontSize: "12px", color: AMBER, letterSpacing: "0.14em", textTransform: "uppercase", fontFamily: DISPLAY_FONT, display: "flex", alignItems: "center", gap: "8px" }}>
           <RavenGlyph size={14} /> World Ledger <span style={{ color: DIM, textTransform: "none", letterSpacing: 0, fontFamily: "ui-monospace, monospace", fontSize: "10px" }}>(Claude's narrative memory)</span>
         </div>
@@ -3214,6 +3253,7 @@ export default function DMMemoryTest() {
           Steel-blue lines in the story feed are code-determined outcomes. Everything above the
           divider is numeric and deterministic; everything below is Claude's qualitative memory.
         </div>
+        </>}
       </div>
       </div>
     </>
