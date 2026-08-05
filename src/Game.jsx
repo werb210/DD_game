@@ -815,11 +815,66 @@ const initialCharacter = {
   death: null,
 };
 
-// Builds the opening scene straight from the chosen identity, with plain code —
-// deliberately NOT an AI call. The very first thing a new player sees shouldn't depend
-// on the AI bridge being up; every turn after this one already goes through Claude, but
-// this one guaranteed to work is worth more than a fancier version that might not load.
-function craftOpeningNarration(identity, startingRegion = "heartlands") {
+const LORE_REGION_KEY = {
+  heavy_forest: "forest",
+};
+
+const OPENING_TONAL_ANCHORS = {
+  mountains: "A guild worker or Deepsinger takes notice of the character's gear or bearing, with guild rivalry chatter audible nearby.",
+  heavy_forest: "The character is noticed near a Ring-bound tree by a Sern elder or Veyanth sympathizer.",
+  coast: "The character arrives mid-haggle at the docks while a blooded contract is being signed nearby.",
+  tundra: "The character is noticed near a hearth mid-Saga-Binder performance, with scar-oaths visible on nearby warriors.",
+  desert: "The character arrives amid clan-trade bartering.",
+  swamp: "The character overhears tribal council business.",
+  heartlands: "The Barrow's Cross/Crossroads Inn tavern opening is one valid Heartlands pattern, but not a universal fallback.",
+};
+
+const FALLBACK_OPENING_ACTIONS = {
+  mountains: ["Ask who judged your gear", "Listen to the guild rivalry", "Approach the Deepsinger"],
+  heavy_forest: ["Greet the elder by the Ring-tree", "Ask what the cords record", "Listen to the Veyanth sympathizer"],
+  coast: ["Watch the blooded contract", "Haggle with the dock trader", "Ask which captain needs hands"],
+  tundra: ["Listen to the Saga-Binder", "Ask about the scar-oaths", "Warm yourself by the hearth"],
+  desert: ["Join the clan-trade bartering", "Ask what caravan just arrived", "Study the merchants' tokens"],
+  swamp: ["Listen to the council dispute", "Ask which tribe called council", "Approach the reed-marked speaker"],
+  heartlands: ["Talk to the innkeeper", "Approach the locals in the corner", "Ask about work in the village"],
+};
+
+function loreForRegion(startingRegion) {
+  return LORE_DATA[LORE_REGION_KEY[startingRegion] || startingRegion] || null;
+}
+
+function buildOpeningTurnPrompt(identity, startingRegion, openingWorldState, openingQuests = []) {
+  const region = REGIONS_TABLE[startingRegion] || REGIONS_TABLE.heartlands;
+  const startingLocationId = region.hubSettlement;
+  const regionOpeningContext = {
+    startingRegion,
+    region,
+    startingLocation: WORLD_MAP[startingLocationId],
+    factions: FACTIONS_TABLE[startingRegion] || null,
+    lore: loreForRegion(startingRegion),
+    tonalAnchor: OPENING_TONAL_ANCHORS[startingRegion] || null,
+  };
+
+  return `WORLD STATE:
+${JSON.stringify(openingWorldState, null, 2)}
+
+CHARACTER SUMMARY (for narrative color only — do not cite numbers):
+${JSON.stringify(
+    characterSummaryForPrompt({ ...initialCharacter, identity }, openingQuests),
+    null,
+    2
+  )}
+
+OPENING TURN CONTEXT (use this for the very first scene after character creation):
+${JSON.stringify(regionOpeningContext, null, 2)}
+
+OPENING TURN INSTRUCTIONS:
+This is the first narration the player sees immediately after character creation, before any player action. Ground the scene and all three suggestedActions in the starting region's actual culture, location, factions, and lore above. Do not default to a generic tavern-arrival scene with an innkeeper, locals in a corner, and village work. The tonalAnchor is only a tonal anchor, not literal text to copy. Heartlands may use the Barrow's Cross/Crossroads Inn tavern opening as one valid regional pattern, but that pattern must not be used as the fallback for other regions.
+
+PLAYER ACTION: Begin the character's story in their starting region.`;
+}
+
+function craftFallbackOpeningNarration(identity, startingRegion = "heartlands") {
   const race = RACE_OPTIONS.find((r) => r.key === identity.race) || RACE_OPTIONS[0];
   const background = BACKGROUND_OPTIONS[identity.background] || BACKGROUND_OPTIONS.farmer;
   const weapon = STARTING_WEAPON_OPTIONS[identity.weapon] || STARTING_WEAPON_OPTIONS.dagger;
@@ -827,14 +882,16 @@ function craftOpeningNarration(identity, startingRegion = "heartlands") {
     ? identity.backstory.trim()
     : "Whatever brought you here, you've kept it to yourself.";
   const appearanceLine = identity.appearance && identity.appearance.trim() ? ` ${identity.appearance.trim()}` : "";
-  const locationName = WORLD_MAP[REGIONS_TABLE[startingRegion].hubSettlement].name;
+  const region = REGIONS_TABLE[startingRegion] || REGIONS_TABLE.heartlands;
+  const locationName = WORLD_MAP[region.hubSettlement].name;
+  const anchor = OPENING_TONAL_ANCHORS[startingRegion] || OPENING_TONAL_ANCHORS.heartlands;
   const narration = startingRegion === "heartlands"
     ? `Rain taps the shutters of the Crossroads Inn. ${identity.name}, a ${race.label.toLowerCase()} formerly a ${background.label.toLowerCase()}, has just arrived in Millbrook, a farming village that smells of woodsmoke and wet hay, a ${weapon.name.toLowerCase()} at your side.${appearanceLine} ${backstoryLine} The innkeeper eyes you — a stranger — while three locals mutter over their ale in the corner.`
-    : `${identity.name}, a ${race.label.toLowerCase()} formerly a ${background.label.toLowerCase()}, begins this road in ${locationName}, the hub of the ${REGIONS_TABLE[startingRegion].displayName.toLowerCase()}, a ${weapon.name.toLowerCase()} at your side.${appearanceLine} ${backstoryLine}`;
+    : `${identity.name}, a ${race.label.toLowerCase()} formerly a ${background.label.toLowerCase()}, begins this road in ${locationName}, the hub of the ${region.displayName.toLowerCase()}, a ${weapon.name.toLowerCase()} at your side.${appearanceLine} ${backstoryLine} ${anchor}`;
   return {
     role: "dm",
     narration,
-    suggestedActions: ["Talk to the innkeeper", "Approach the locals in the corner", "Ask about work in the village"],
+    suggestedActions: FALLBACK_OPENING_ACTIONS[startingRegion] || FALLBACK_OPENING_ACTIONS.heartlands,
   };
 }
 
@@ -1935,10 +1992,25 @@ export default function DMMemoryTest() {
       });
       const startingGold = 10 + (background.startingGold || 0);
       const startingInventory = buildStartingInventory(identityDetails.weapon, identityDetails.background);
-      setCharacter({ ...initialCharacter, attributes: startingAttributes, gold: startingGold, inventory: startingInventory, identity: identityWithRegion, traits, formativeAnswers, startingRegion, regionalPassive });
+      const openingCharacter = { ...initialCharacter, attributes: startingAttributes, gold: startingGold, inventory: startingInventory, identity: identityWithRegion, traits, formativeAnswers, startingRegion, regionalPassive };
       const startingLocationId = REGIONS_TABLE[startingRegion].hubSettlement;
-      setWorldState((world) => ({ ...world, day: 1, locationId: startingLocationId, locations: cloneWorldMap(startingLocationId) }));
-      setLog([craftOpeningNarration(identityWithRegion, startingRegion)]);
+      const openingWorldState = { ...initialWorldState, day: 1, locationId: startingLocationId, locations: cloneWorldMap(startingLocationId) };
+      setCharacter(openingCharacter);
+      setWorldState(openingWorldState);
+      setLog([craftFallbackOpeningNarration(identityWithRegion, startingRegion)]);
+      setLoading(true);
+      callModel(EXPLORATION_SYSTEM_PROMPT, buildOpeningTurnPrompt(identityWithRegion, startingRegion, openingWorldState), 1200, 1, null, (info) => pushDebugEntry("opening scene", info))
+        .then((result) => {
+          const narration = typeof result.narration === "string" ? result.narration : null;
+          const suggestedActions = Array.isArray(result.suggestedActions) && result.suggestedActions.length
+            ? result.suggestedActions.slice(0, 3)
+            : null;
+          if (narration) setLog([{ role: "dm", narration, suggestedActions: suggestedActions || FALLBACK_OPENING_ACTIONS[startingRegion] || FALLBACK_OPENING_ACTIONS.heartlands }]);
+        })
+        .catch((e) => {
+          setError(`Opening scene fell back to regional narration because Claude was unavailable: ${e.message}`);
+        })
+        .finally(() => setLoading(false));
     } else {
       setCharacter((c) => ({ ...c, identity: identityDetails, traits, formativeAnswers }));
       pushSystemLine(`✎ ${identityDetails.name} — the story continues.`);
