@@ -252,6 +252,32 @@ const CONSUMABLE_TABLE = {
 // item name directly, and even small phrasing differences ("Iron Longsword" vs
 // "iron longsword") silently broke it. Picking from this fixed, code-known list is the
 // same fix already applied to consumables — Claude never invents the atk/defBonus numbers.
+export const ELEMENT_ADVANTAGE_TABLE = [
+  { attacker: "fire", defender: "frost", modifier: 0.05 },
+  { attacker: "frost", defender: "lightning", modifier: 0.05 },
+  { attacker: "lightning", defender: "nature", modifier: 0.05 },
+  { attacker: "nature", defender: "shadow", modifier: 0.05 },
+  { attacker: "shadow", defender: "radiant", modifier: 0.05 },
+  { attacker: "radiant", defender: "fire", modifier: 0.05 }
+];
+
+export const SPELL_TABLE = [
+  { spellId: "firebolt", name: "Firebolt", school: "evocation", element: "fire", tier: 1, manaCost: 6, effectType: "damage", effectMagnitude: 8, levelReq: 1, region: null },
+  { spellId: "frost_lance", name: "Frost Lance", school: "evocation", element: "frost", tier: 1, manaCost: 6, effectType: "damage", effectMagnitude: 7, levelReq: 1, region: null },
+  { spellId: "static_shock", name: "Static Shock", school: "evocation", element: "lightning", tier: 1, manaCost: 8, effectType: "damage", effectMagnitude: 10, levelReq: 2, region: null },
+  { spellId: "mend_wounds", name: "Mend Wounds", school: "restoration", element: "radiant", tier: 1, manaCost: 10, effectType: "heal", effectMagnitude: 12, levelReq: 1, region: null },
+  { spellId: "natures_ward", name: "Nature's Ward", school: "arcane", element: "nature", tier: 1, manaCost: 8, effectType: "buff_def", effectMagnitude: 3, levelReq: 2, region: null },
+  { spellId: "shadow_veil", name: "Shadow Veil", school: "arcane", element: "shadow", tier: 1, manaCost: 10, effectType: "buff_dodge", effectMagnitude: 20, levelReq: 3, region: null }
+];
+
+export const COMBO_TABLE = [
+  { elementA: "fire", statusOnTarget: "wet", bonusEffectKey: "steam_burst" },
+  { elementA: "frost", statusOnTarget: "wet", bonusEffectKey: "frozen_skip_turn" }
+];
+
+// Empty for now — spell mods to be seeded in a later pass
+export const MOD_TABLE = [];
+
 const EQUIPMENT_TABLE = {
   rusty_dagger: { slot: "weapon", atkBonus: 1 },
   steel_dagger: { slot: "weapon", atkBonus: 2 },
