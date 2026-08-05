@@ -30,6 +30,7 @@ import dungeonLocation from './assets/loc_dungeon.png';
 import forestRoadLocation from './assets/loc_forest_road.png';
 import innLocation from './assets/loc_inn.png';
 import villageLocation from './assets/loc_village.png';
+import { LORE_DATA } from './LORE_DATA.js';
 
 // ---- Design tokens ----
 // Grimdark medieval reskin: cold iron, old blood, tarnished gold leaf on parchment ink.
@@ -927,6 +928,9 @@ FIXED WORLD CANON (never rename, relocate, replace, or contradict it):
 REGIONS: ${JSON.stringify(REGIONS_TABLE)}
 WORLD MAP: ${JSON.stringify(WORLD_MAP)}
 FACTIONS: ${JSON.stringify(FACTIONS_TABLE)}
+LORE DATA: ${JSON.stringify(LORE_DATA)}
+
+LORE DATA is code-owned mythology and deep history. When narrating regional lore, NPC beliefs, customs, history, or mysteries for covered regions, use it as fixed canon and do not invent conflicting details. If a region or topic is not covered there, you may narrate freely as long as you do not contradict the fixed canon above.
 
 You'll receive the current WORLD STATE, CHARACTER SUMMARY (level/rough HP status/inventory/active quests/notable traits — for narrative color only), and the player's action.
 
