@@ -31,6 +31,9 @@ import forestRoadLocation from './assets/loc_forest_road.png';
 import innLocation from './assets/loc_inn.png';
 import villageLocation from './assets/loc_village.png';
 import { LORE_DATA } from './LORE_DATA.js';
+import { STATUS_EFFECT_TABLE } from './data/statusEffectData.js';
+import { WEAPON_ASPECT_TABLE } from './data/weaponAspectData.js';
+import { RUNE_TABLE } from './data/runeData.js';
 
 // ---- Design tokens ----
 // Grimdark medieval reskin: cold iron, old blood, tarnished gold leaf on parchment ink.
@@ -239,6 +242,10 @@ const NPC_TRAITS = [
 // kinds when the item is a usable curative — the actual heal amount lives here in code,
 // never in Claude's narration. Items with no kind (or an unrecognized one) are just flavor/
 // equipment: they sit in inventory but have no coded effect yet.
+const MATERIAL_TABLE = {
+  chorus_shard: { label: "Chorus Shard", dropTier: "rare" },
+};
+
 const CONSUMABLE_TABLE = {
   minor_healing: { healAmount: 12, label: "a minor restorative" },
   healing: { healAmount: 25, label: "a restorative" },
@@ -282,10 +289,10 @@ export const MOD_TABLE = [];
 const EQUIPMENT_TABLE = {
   rusty_dagger: { slot: "weapon", atkBonus: 1 },
   steel_dagger: { slot: "weapon", atkBonus: 2 },
-  iron_sword: { slot: "weapon", atkBonus: 3, strRequired: 8 },
+  iron_sword: { slot: "weapon", atkBonus: 3, strRequired: 8, aspect: "flame" },
   silver_rapier: { slot: "weapon", atkBonus: 3 },
-  war_axe: { slot: "weapon", atkBonus: 4, strRequired: 14 },
-  oak_staff: { slot: "weapon", atkBonus: 2 },
+  war_axe: { slot: "weapon", atkBonus: 4, strRequired: 14, aspect: "lightning" },
+  oak_staff: { slot: "weapon", atkBonus: 2, aspect: "poison" },
   robes: { slot: "armor", defBonus: 1 },
   leather_armor: { slot: "armor", defBonus: 2 },
   chainmail: { slot: "armor", defBonus: 3 },
@@ -301,7 +308,7 @@ const EQUIPMENT_TABLE = {
   starting_hammer: { slot: "weapon", atkBonus: 1, strRequired: 12 },
 };
 
-// ---- Attribute system. Six primary attributes drive every derived combat/social number.
+// ---- Attribute system. Seven primary attributes drive every derived combat/social number.
 // Claude never sees or sets attribute values or derived stats — it only ever gets a
 // narrative-flavor summary (condition, notable traits) for color in its prose.
 
@@ -312,10 +319,11 @@ const ATTRIBUTE_DEFS = {
   int: { label: "Intelligence", short: "INT" },
   wis: { label: "Wisdom", short: "WIS" },
   cha: { label: "Charisma", short: "CHA" },
+  arcane: { label: "Arcane", short: "ARC" },
 };
 
 const ATTRIBUTE_CAP = 99;
-const ATTRIBUTE_POINTS_PER_LEVEL = 4;
+const ATTRIBUTE_POINTS_PER_LEVEL = 5;
 const DAILY_TRAINING_CAP = 2;
 
 // Training prices are deliberately code-owned. Early growth is accessible, while the
@@ -336,11 +344,42 @@ function validTrainableStats(entries) {
   });
 }
 
-const initialAttributes = { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 };
+const initialAttributes = { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10, arcane: 10 };
 
 // Race is pure narrative flavor — no stat effect at all. It exists so Claude has
 // something true and stable to reference in narration, not to give anyone a mechanical
 // edge over anyone else.
+
+const RACE_STAT_BONUS_TABLE = {
+  human: {},
+  dwarf: { con: 2, str: 1 },
+  elf: { dex: 2, int: 1 },
+  halfling: { dex: 1, cha: 2 },
+  orc: { str: 2, con: 1 },
+  tiefling: { cha: 1, arcane: 1 }
+};
+
+const BACKGROUND_STAT_BONUS_TABLE = {
+  mercenary: { str: 1, con: 1 },
+  scholar: { int: 2 },
+  noble: { cha: 2 },
+  criminal: { dex: 2 },
+  hedge_mage: { arcane: 2 }
+};
+
+function statBonusText(bonus = {}) {
+  const entries = Object.entries(bonus).filter(([, amount]) => amount);
+  if (!entries.length) return 'No stat bonuses';
+  return entries.map(([k, v]) => `+${v} ${ATTRIBUTE_DEFS[k]?.short || k.toUpperCase()}`).join(', ');
+}
+
+function combinedStatBonus(...tables) {
+  return tables.reduce((acc, table) => {
+    Object.entries(table || {}).forEach(([key, amount]) => { acc[key] = (acc[key] || 0) + amount; });
+    return acc;
+  }, {});
+}
+
 const RACE_OPTIONS = [
   { key: "human", label: "Human", flavor: "Adaptable and unremarkable at a glance — humans get by on grit and versatility." },
   { key: "elf", label: "Elf", flavor: "Long-lived and keenly perceptive, elves are often underestimated by those who mistake grace for fragility." },
@@ -471,8 +510,12 @@ const BACKGROUND_OPTIONS = {
   merchant: { label: "Merchant", bonus: { cha: 2, int: 1 }, flavor: "You know the value of nearly everything, and the price of everything else.", npcTag: "Other merchants deal with you a little more fairly.", startingGold: 15, priceEdge: true },
   priest: { label: "Priest", bonus: { wis: 2, cha: 1 }, flavor: "A life of devotion taught you patience most people never learn.", npcTag: "The pious and temple-goers treat you with quiet respect.", startingItem: { name: "Minor Restorative", consumableKind: "minor_healing", equipmentKey: null } },
   criminal: { label: "Criminal", bonus: { dex: 2, cha: 1 }, flavor: "You've made a living finding the gaps in other people's attention.", npcTag: "The underworld recognizes one of its own.", startingGold: 15 },
+  hedge_mage: { label: "Hedge Mage", bonus: { arcane: 2 }, flavor: "You learned charms, wards, and forbidden alphabets far from any formal academy.", npcTag: "Witches, occultists, and suspicious villagers recognize the signs of hedge magic.", startingItem: { name: "Traveler's Robes", consumableKind: null, equipmentKey: "robes" } },
   urchin: { label: "Street Urchin", bonus: { dex: 2, con: 1 }, flavor: "You grew up fast, and learned to go hungry without complaint.", npcTag: "Beggars and street folk trust you as one of their own.", startingItem: { name: "Rations", consumableKind: "ration", equipmentKey: null } },
 };
+Object.entries(BACKGROUND_STAT_BONUS_TABLE).forEach(([key, bonus]) => {
+  if (BACKGROUND_OPTIONS[key]) BACKGROUND_OPTIONS[key].bonus = bonus;
+});
 
 // Formative memories are narrative color only. Their trait nudges are deliberately
 // kept separate from race/background selection and every other mechanical gate.
@@ -598,6 +641,10 @@ const ABILITY_TABLE = {
   cha: [
     { min: 20, key: "silver_tongue", label: "Silver Tongue", mechanical: true, description: "Merchants warm to you faster than most — even better prices." },
     { min: 50, key: "commanding_presence", label: "Commanding Presence", mechanical: false, description: "People instinctively defer to you." },
+  ],
+  arcane: [
+    { min: 20, key: "runic_attunement", label: "Runic Attunement", mechanical: true, description: "Your socketed elemental runes harmonize more strongly with spells you know." },
+    { min: 50, key: "occult_resonance", label: "Occult Resonance", mechanical: false, description: "You recognize hidden patterns in curses, sigils, and lingering magic." },
   ],
 };
 
@@ -758,7 +805,7 @@ const initialCharacter = {
   dailyTrainingUsed: 0,
   dailyTrainingCap: DAILY_TRAINING_CAP,
   inventory: [
-    { id: "item_1", name: "Rusty dagger", consumableKind: null, equipmentKey: "rusty_dagger", rarity: "common", quantity: 1 },
+    { id: "item_1", name: "Rusty dagger", consumableKind: null, equipmentKey: "rusty_dagger", rarity: "common", runeSlots: 0, runes: [], quantity: 1 },
     { id: "item_2", name: "Rations", consumableKind: "ration", equipmentKey: null, rarity: "common", quantity: 3 },
   ],
   equipped: { weapon: null, armor: null },
@@ -822,7 +869,7 @@ const TUTORIAL_STEPS = [
   },
   {
     title: "Attributes",
-    body: "You have six attributes: STR, DEX, CON, INT, WIS, CHA. Every level banks 4 skill points. Trusted trainers can turn those points into growth, up to two lessons per in-game day, provided you can pay their fee.",
+    body: "You have seven attributes: STR, DEX, CON, INT, WIS, CHA, ARC. Every level banks 5 skill points. Trusted trainers can turn those points into growth, up to two lessons per in-game day, provided you can pay their fee.",
   },
   {
     title: "Abilities",
@@ -954,8 +1001,8 @@ Respond with ONLY valid JSON, no markdown fences, no preamble:
   "narration": "string",
   "stateUpdates": {
     "location": null,
-    "newNPCs": [{"name": "string", "memory": "short fact", "traits": "array of 1-3 strings from the fixed trait list below, optional", "goal": "short string, what this NPC wants, optional", "secret": "short string, something hidden about them, optional", "isTrainer": "boolean, optional", "trainableStats": "optional array of {stat: STR|DEX|CON|INT|WIS|CHA, maxLevel: integer}; maxLevel must equal this NPC's own ability", "trustRequired": "integer, optional; minimum trust for instruction"}],
-    "npcUpdates": [{"id": "string — exact existing npc id from WORLD STATE", "name": "string, optional — only when this NPC's real name is genuinely revealed in the fiction for the first time", "memory": "updated fact, optional", "traits": "array of 1-3 strings from the fixed trait list, optional — only include if it should change", "goal": "short string, optional — only include if it changes", "secret": "short string, optional — only include if newly revealed or changed", "isTrainer": "boolean, optional", "trainableStats": "optional array of {stat: STR|DEX|CON|INT|WIS|CHA, maxLevel: integer}", "trustRequired": "integer, optional"}],
+    "newNPCs": [{"name": "string", "memory": "short fact", "traits": "array of 1-3 strings from the fixed trait list below, optional", "goal": "short string, what this NPC wants, optional", "secret": "short string, something hidden about them, optional", "isTrainer": "boolean, optional", "trainerSubtype": "standard|deepsinger, optional", "trainableStats": "optional array of {stat: STR|DEX|CON|INT|WIS|CHA|ARC, maxLevel: integer}; maxLevel must equal this NPC's own ability", "trustRequired": "integer, optional; minimum trust for instruction"}],
+    "npcUpdates": [{"id": "string — exact existing npc id from WORLD STATE", "name": "string, optional — only when this NPC's real name is genuinely revealed in the fiction for the first time", "memory": "updated fact, optional", "traits": "array of 1-3 strings from the fixed trait list, optional — only include if it should change", "goal": "short string, optional — only include if it changes", "secret": "short string, optional — only include if newly revealed or changed", "isTrainer": "boolean, optional", "trainerSubtype": "standard|deepsinger, optional", "trainableStats": "optional array of {stat: STR|DEX|CON|INT|WIS|CHA|ARC, maxLevel: integer}", "trustRequired": "integer, optional"}],
     "reputationDelta": "string or null",
     "worldFacts": ["short new persistent facts, if any"]
   },
@@ -968,7 +1015,7 @@ Respond with ONLY valid JSON, no markdown fences, no preamble:
     {"type": "quest_complete", "title": "string — must match an active quest title exactly"},
     {"type": "npc_relationship", "id": "string — exact existing npc id from WORLD STATE", "interaction": "helped|betrayed|threatened|impressed|protected|insulted|spared|smallKindness|smallSlight"},
     {"type": "shop_open", "id": "string — exact existing npc id from WORLD STATE", "merchantType": "general_store|blacksmith|apothecary|fence"}
-    ,{"type": "training_offer", "id": "exact existing trainer npc id", "stat": "STR|DEX|CON|INT|WIS|CHA"}
+    ,{"type": "training_offer", "id": "exact existing trainer npc id", "stat": "STR|DEX|CON|INT|WIS|CHA|ARC"}
     ,{"type": "location_hint", "existingId": "exact WORLD MAP location id"}
     ,{"type": "day_advance", "reason": "short description of the sleep or time skip"}
     ,{"type": "skill_check_offer", "checkType": "force|finesse|endure|discern|perceive|sway", "npcId": "optional exact existing npc id when a specific person is involved"}
@@ -1003,6 +1050,8 @@ For npc_relationship: use this liberally for small, easy-to-miss moments, not ju
 For "traits", "goal", and "secret" on newNPCs/npcUpdates: these are optional and meant for NPCs who actually matter to the current scene or an active thread — not every passing name needs a full profile. "traits" must be 1-3 entries from this exact fixed list: Honest, Greedy, Cowardly, Brave, Loyal, Curious, Stubborn, Suspicious, Kind, Ambitious, Superstitious, Vengeful — never invent a trait outside this list. "goal" and "secret" are free text, kept to a single short sentence. A "secret" being stored here does NOT mean the player knows it — it's private narrative memory for you to reference consistently and reveal in-fiction only if and when the story actually earns that reveal; never have an NPC blurt out their own secret unprompted just because it exists in this field. Only include a field in npcUpdates when it's actually changing — omit memory/traits/goal/secret entirely rather than repeating unchanged values.
 
 Include "name" in an npcUpdates entry whenever an NPC previously introduced under a placeholder or descriptive label (e.g. "The map-folder," "Two laborers by the fire") reveals their real name, or a name they go by, for the first time in the story. Once renamed, always refer to them by that real name in narration going forward — never fall back to the old placeholder label again. If a group label covers multiple people and only one of them gives a name, use your judgment: either rename the whole entry to that person's name if they become the one the player is actually dealing with, or leave the group entry as-is and introduce the named person as a separate new NPC if they're meaningfully distinct from the group.
+
+For Deepsinger trainers: use isTrainer true with trainerSubtype "deepsinger". They follow the same trustRequired gate as other trainers and can socket runes into equipment using RUNE_TABLE when the fiction describes rune work.
 
 For "shop_open": use this whenever the player's action would plausibly put them in front of a merchant to browse or trade — approaching a shopkeeper, stepping into a store, asking a trader what they have. The NPC being shopped with MUST already exist (introduce them via newNPCs first if they're new, then use their id — never open a shop on the same turn you introduce the NPC, since their id isn't assigned until after this turn resolves; narrate the approach that turn and let the player's next action open the shop). Pick "merchantType" based on what kind of trader the fiction calls for: "general_store" for a village shop selling odds and ends, "blacksmith" for weapons/armor, "apothecary" for potions/herbs/curatives, "fence" for a black-market or disreputable buyer/seller who deals in stolen or rare goods, usually found in shadier settings. Code handles the actual stock and prices — never narrate specific prices or invent items in the shop yourself. If an NPC's fear value in WORLD STATE is very high (7+), code will silently refuse to open their shop — so don't narrate a hostile, frightened NPC warmly welcoming the player to trade; narrate the refusal or distrust instead. Likewise, an NPC with high trust (5+) genuinely does give the player better prices and one with very low/negative trust gives worse ones — feel free to reflect that in narration (a warm discount, a suspicious markup) since it's already true in the numbers.
 
@@ -1064,6 +1113,74 @@ function rollRarity() {
 
 function rarityOf(item) {
   return RARITY_TIERS[item?.rarity] ? item.rarity : "common";
+}
+
+function runeSlotsForRarity(rarity) {
+  const tier = rarityOf({ rarity });
+  if (tier === "rare") return 1;
+  if (tier === "epic") return 2;
+  if (tier === "legendary" || tier === "mythic") return 3;
+  return 0;
+}
+
+function aspectForWeapon(def) {
+  return WEAPON_ASPECT_TABLE.find((aspect) => aspect.aspectId === def?.aspect) || null;
+}
+
+function canUseWeaponAspect(character, def) {
+  const aspect = aspectForWeapon(def);
+  if (!aspect) return true;
+  return (character.attributes?.[aspect.scalesWith] || 0) >= aspect.statRequired;
+}
+
+function getStatusDef(statusId) {
+  return STATUS_EFFECT_TABLE.find((status) => status.statusId === statusId) || null;
+}
+
+function attemptApplyStatus(target, statusId, sourceStat = 10, random = Math.random) {
+  const status = getStatusDef(statusId);
+  if (!status) return { target, applied: false, reason: "unknown_status" };
+  const cooldowns = { ...(target.statusCooldowns || {}) };
+  if (statusId === "stunned" && (cooldowns.stunned || 0) > 0) return { target, applied: false, reason: "stun_cooldown" };
+  if (statusId === "stunned" && random() >= (status.procCap ?? 1)) return { target, applied: false, reason: "proc_cap" };
+  const activeStatuses = { ...(target.activeStatuses || {}) };
+  activeStatuses[statusId] = { turns: statusId === "stunned" || statusId === "frozen" ? 1 : 3, sourceStat };
+  return { target: { ...target, activeStatuses }, applied: true, status };
+}
+
+function tickStatuses(target) {
+  const activeStatuses = { ...(target.activeStatuses || {}) };
+  const statusCooldowns = Object.fromEntries(Object.entries(target.statusCooldowns || {}).flatMap(([k, v]) => v > 1 ? [[k, v - 1]] : []));
+  Object.entries(activeStatuses).forEach(([statusId, data]) => {
+    const nextTurns = (data.turns || 1) - 1;
+    if (nextTurns <= 0) {
+      delete activeStatuses[statusId];
+      const status = getStatusDef(statusId);
+      if (statusId === "stunned" && status?.cooldownTurns) statusCooldowns.stunned = status.cooldownTurns;
+    } else activeStatuses[statusId] = { ...data, turns: nextTurns };
+  });
+  return { ...target, activeStatuses, statusCooldowns };
+}
+
+export function applyTrivializationRule({ attackerStat = 1, defenderStat = 1, attackerLevel = 1, defenderLevel = 1, outgoingDamage = 1 }) {
+  const statRatio = Math.max(attackerStat, 1) >= Math.max(defenderStat, 1) * 3;
+  const reverseStatRatio = Math.max(defenderStat, 1) >= Math.max(attackerStat, 1) * 3;
+  const levelRatio = Math.max(attackerLevel, 1) >= Math.max(defenderLevel, 1) * 3;
+  const reverseLevelRatio = Math.max(defenderLevel, 1) >= Math.max(attackerLevel, 1) * 3;
+  if (reverseStatRatio || reverseLevelRatio) return 1;
+  if (statRatio || levelRatio) return Math.max(1, outgoingDamage);
+  return outgoingDamage;
+}
+
+function runeElement(effect = "") {
+  const match = String(effect).match(/^bonus_(fire|frost|lightning|nature|shadow|radiant|poison)_damage$/);
+  return match?.[1] || null;
+}
+
+function runicSynergyBonus(character, element) {
+  const known = (character.knownSpells || []).some((id) => SPELL_TABLE.find((spell) => spell.spellId === id && spell.element === element));
+  const socketed = Object.values(character.equipped || {}).flatMap((item) => item?.runes || []).some((runeId) => runeElement(RUNE_TABLE.find((r) => r.runeId === runeId)?.effect) === element);
+  return known && socketed ? (character.attributes?.arcane || 0) * 0.01 : 0;
 }
 
 const ITEM_VALUE_TABLE = {
@@ -1789,7 +1906,7 @@ export default function DMMemoryTest() {
     const weapon = STARTING_WEAPON_OPTIONS[weaponKey] || STARTING_WEAPON_OPTIONS.dagger;
     const background = BACKGROUND_OPTIONS[backgroundKey];
     const items = [
-      { id: `item_${nextItemIdRef.current++}`, name: weapon.name, consumableKind: null, equipmentKey: weapon.equipmentKey, rarity: "common", quantity: 1 },
+      { id: `item_${nextItemIdRef.current++}`, name: weapon.name, consumableKind: null, equipmentKey: weapon.equipmentKey, rarity: "common", runeSlots: 0, runes: [], quantity: 1 },
       { id: `item_${nextItemIdRef.current++}`, name: "Rations", consumableKind: "ration", equipmentKey: null, rarity: "common", quantity: 3 },
     ];
     if (background?.startingItem) {
@@ -1798,7 +1915,7 @@ export default function DMMemoryTest() {
       if (match) {
         match.quantity += 1;
       } else {
-        items.push({ id: `item_${nextItemIdRef.current++}`, name: si.name, consumableKind: si.consumableKind || null, equipmentKey: si.equipmentKey || null, rarity: "common", quantity: 1 });
+        items.push({ id: `item_${nextItemIdRef.current++}`, name: si.name, consumableKind: si.consumableKind || null, equipmentKey: si.equipmentKey || null, rarity: "common", runeSlots: 0, runes: [], quantity: 1 });
       }
     }
     return items;
@@ -1812,7 +1929,8 @@ export default function DMMemoryTest() {
       const identityWithRegion = { ...identityDetails, startingRegion, regionalPassive };
       const background = BACKGROUND_OPTIONS[identityDetails.background] || BACKGROUND_OPTIONS.farmer;
       const startingAttributes = { ...initialAttributes };
-      Object.entries(background.bonus).forEach(([key, amount]) => {
+      const creationBonuses = combinedStatBonus(RACE_STAT_BONUS_TABLE[identityDetails.race], BACKGROUND_STAT_BONUS_TABLE[identityDetails.background] || background.bonus);
+      Object.entries(creationBonuses).forEach(([key, amount]) => {
         startingAttributes[key] = Math.min(ATTRIBUTE_CAP, startingAttributes[key] + amount);
       });
       const startingGold = 10 + (background.startingGold || 0);
@@ -1889,6 +2007,8 @@ export default function DMMemoryTest() {
         consumableKind: consumableKind || null,
         equipmentKey: equipmentKey || null,
         rarity: safeRarity,
+        runeSlots: equipmentKey ? runeSlotsForRarity(safeRarity) : 0,
+        runes: [],
         quantity: 1,
       };
       return { ...c, inventory: [...c.inventory, newItem] };
@@ -1903,6 +2023,11 @@ export default function DMMemoryTest() {
     const item = character.inventory[idx];
     const def = EQUIPMENT_TABLE[item.equipmentKey];
     if (!def) return; // not equippable
+    if (def.slot === "weapon" && !canUseWeaponAspect(character, def)) {
+      const aspect = aspectForWeapon(def);
+      pushSystemLine(`⚠ Cannot equip ${item.name}: requires ${ATTRIBUTE_DEFS[aspect.scalesWith].short} ${aspect.statRequired} to control its ${aspect.aspectId} aspect.`);
+      return;
+    }
     const slot = def.slot;
     const previouslyEquipped = character.equipped?.[slot] || null;
 
@@ -1941,7 +2066,7 @@ export default function DMMemoryTest() {
       return {
         ...c,
         inventory: nextInventory,
-        equipped: { ...c.equipped, [slot]: { id: invItem.id, name: invItem.name, equipmentKey: invItem.equipmentKey, rarity: invItem.rarity || "common" } },
+        equipped: { ...c.equipped, [slot]: { id: invItem.id, name: invItem.name, equipmentKey: invItem.equipmentKey, rarity: invItem.rarity || "common", runeSlots: runeSlotsForRarity(invItem.rarity), runes: invItem.runes || [] } },
       };
     });
     pushSystemLine(
@@ -2113,6 +2238,10 @@ export default function DMMemoryTest() {
         addItemToInventory(event.itemName, kind, equipKey, rarity);
         const rarityTag = rarity !== "common" ? ` (${RARITY_TIERS[rarity].label})` : "";
         pushSystemLine(`+ Looted: ${event.itemName}${rarityTag}`);
+        if (rarity === MATERIAL_TABLE.chorus_shard.dropTier && Math.random() < 0.35) {
+          addItemToInventory(MATERIAL_TABLE.chorus_shard.label, null, null, "rare");
+          pushSystemLine(`+ Material: ${MATERIAL_TABLE.chorus_shard.label}`);
+        }
       } else if (event.type === "gold_found") {
         const amount = rollGoldForTier(event.tier);
         setCharacter((c) => ({ ...c, gold: c.gold + amount }));
@@ -2400,6 +2529,7 @@ export default function DMMemoryTest() {
               ...(npc.goal ? { goal: npc.goal } : {}),
               ...(npc.secret ? { secret: npc.secret } : {}),
               ...(typeof npc.isTrainer === "boolean" ? { isTrainer: npc.isTrainer } : {}),
+              trainerSubtype: npc.trainerSubtype === "deepsinger" ? "deepsinger" : (next.npcs[existingByName].trainerSubtype || "standard"),
               ...(trainerStats.length ? { trainableStats: trainerStats } : {}),
               ...(Number.isFinite(Number(npc.trustRequired)) ? { trustRequired: Math.floor(Number(npc.trustRequired)) } : {}),
             };
@@ -2417,6 +2547,7 @@ export default function DMMemoryTest() {
               secret: npc.secret || null,
               personalFear: null,
               isTrainer: !!npc.isTrainer,
+              trainerSubtype: npc.trainerSubtype === "deepsinger" ? "deepsinger" : "standard",
               trainableStats: validTrainableStats(npc.trainableStats),
               trustRequired: Number.isFinite(Number(npc.trustRequired)) ? Math.floor(Number(npc.trustRequired)) : 0,
               taughtOut: {},
@@ -2440,6 +2571,7 @@ export default function DMMemoryTest() {
             ...(update.goal ? { goal: update.goal } : {}),
             ...(update.secret ? { secret: update.secret } : {}),
             ...(typeof update.isTrainer === "boolean" ? { isTrainer: update.isTrainer } : {}),
+            ...(update.trainerSubtype === "deepsinger" ? { trainerSubtype: "deepsinger" } : {}),
             ...(trainerStats.length ? { trainableStats: trainerStats } : {}),
             ...(Number.isFinite(Number(update.trustRequired)) ? { trustRequired: Math.floor(Number(update.trustRequired)) } : {}),
           };
@@ -2469,7 +2601,7 @@ export default function DMMemoryTest() {
     setLoading(true);
     setError(null);
 
-    let enemy = { ...combat.enemy };
+    let enemy = tickStatuses({ ...combat.enemy });
     let nextCharacter = { ...character };
     const facts = { action: actionType };
     // Always fight with gear-adjusted stats, never the raw base numbers — this is the
@@ -2512,11 +2644,20 @@ export default function DMMemoryTest() {
         const atk = isPowerStrike ? Math.round(effStats.atk * 1.6) : effStats.atk;
         const attackHitChance = isPowerStrike ? Math.max(15, playerHitChance - 20) : playerHitChance;
         const { dmg, crit, missed } = rollOutgoingHit(atk, enemy.defense, effStats.critChance, attackHitChance, effStats.critMultiplier);
-        enemy.hp = Math.max(0, enemy.hp - dmg);
-        facts.playerDamageDealt = dmg;
+        const relevantStat = isPowerStrike ? nextCharacter.attributes.str : Math.max(nextCharacter.attributes.str || 1, nextCharacter.attributes.arcane || 1);
+        const finalDmg = applyTrivializationRule({ attackerStat: relevantStat, defenderStat: enemy.defense || 1, attackerLevel: nextCharacter.level, defenderLevel: combat.severity === "mythic" ? 5 : combat.severity === "legendary" ? 4 : combat.severity === "epic" ? 3 : combat.severity === "rare" ? 2 : 1, outgoingDamage: dmg });
+        enemy.hp = Math.max(0, enemy.hp - finalDmg);
+        facts.playerDamageDealt = finalDmg;
         facts.playerCrit = crit;
         facts.playerMissed = missed;
         facts.powerStrike = isPowerStrike;
+        const weaponDef = nextCharacter.equipped?.weapon ? EQUIPMENT_TABLE[nextCharacter.equipped.weapon.equipmentKey] : null;
+        const aspect = aspectForWeapon(weaponDef);
+        if (!missed && aspect?.appliesStatus && canUseWeaponAspect(nextCharacter, weaponDef)) {
+          const statusAttempt = attemptApplyStatus(enemy, aspect.appliesStatus, nextCharacter.attributes[aspect.scalesWith] || 10);
+          enemy = statusAttempt.target;
+          facts.aspectStatus = { aspect: aspect.aspectId, status: aspect.appliesStatus, applied: statusAttempt.applied, reason: statusAttempt.reason || null };
+        }
         facts.enemyHpRemaining = enemy.hp;
       }
       facts.enemyDefeated = enemy.hp <= 0;
@@ -2529,8 +2670,9 @@ export default function DMMemoryTest() {
         const openDefense = isPowerStrike ? Math.floor(effStats.def / 2) : effStats.def + incomingDefenseBonus;
         const enemyHitChance = actionType === "defend" ? hitChanceFor(enemyBaseHitChance, 15) : enemyBaseHitChance;
         const { dmg, dodged, missed } = rollIncomingHit(enemy.attack, openDefense, effStats.dodgeChance, enemyHitChance);
-        nextCharacter.hp = Math.max(0, nextCharacter.hp - dmg);
-        facts.enemyDamageDealt = dmg;
+        const finalEnemyDmg = applyTrivializationRule({ attackerStat: enemy.attack || 1, defenderStat: nextCharacter.attributes.con || 1, attackerLevel: combat.severity === "mythic" ? 5 : combat.severity === "legendary" ? 4 : combat.severity === "epic" ? 3 : combat.severity === "rare" ? 2 : 1, defenderLevel: nextCharacter.level, outgoingDamage: dmg });
+        nextCharacter.hp = Math.max(0, nextCharacter.hp - finalEnemyDmg);
+        facts.enemyDamageDealt = finalEnemyDmg;
         facts.playerDodged = dodged;
         facts.enemyMissed = missed;
         facts.playerHpRemaining = nextCharacter.hp;
@@ -3222,7 +3364,7 @@ export default function DMMemoryTest() {
                 )}
                 {n.isTrainer && (
                   <div style={{ color: AMBER, paddingLeft: "8px", fontSize: "11px", marginTop: "3px" }}>
-                    Trainer · trust required {n.trustRequired || 0} · {(n.trainableStats || []).map((entry) => `${ATTRIBUTE_DEFS[entry.stat]?.short || entry.stat.toUpperCase()} to ${entry.maxLevel}${n.taughtOut?.[entry.stat] ? " (taught out)" : ""}`).join(" · ") || "no disciplines"}
+                    {n.trainerSubtype === "deepsinger" ? "Deepsinger" : "Trainer"} · trust required {n.trustRequired || 0} · {(n.trainableStats || []).map((entry) => `${ATTRIBUTE_DEFS[entry.stat]?.short || entry.stat.toUpperCase()} to ${entry.maxLevel}${n.taughtOut?.[entry.stat] ? " (taught out)" : ""}`).join(" · ") || "no disciplines"}
                   </div>
                 )}
               </div>
@@ -3276,6 +3418,9 @@ function CharacterCreationScreen({ mode, onSubmit }) {
   const allMemoriesAnswered = FORMATIVE_MEMORY_QUESTIONS.every((question) => formativeSelections[question.id] !== undefined);
   const canSubmit = name.trim().length > 0 && race && background && allMemoriesAnswered;
   const GENDER_OPTIONS = ["Male", "Female", "Nonbinary", "Prefer not to say"];
+  const raceBonus = RACE_STAT_BONUS_TABLE[race] || {};
+  const backgroundBonus = background ? (BACKGROUND_STAT_BONUS_TABLE[background] || BACKGROUND_OPTIONS[background]?.bonus || {}) : {};
+  const previewBonus = combinedStatBonus(raceBonus, backgroundBonus);
 
   function fieldLabel(text) {
     return (
@@ -3365,7 +3510,7 @@ function CharacterCreationScreen({ mode, onSubmit }) {
           <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
             {RACE_OPTIONS.map(raceButton)}
           </div>
-          {race && <p style={{ color: SLATE, fontSize: "11.5px", marginTop: "8px", lineHeight: 1.5 }}>{RACE_OPTIONS.find((r) => r.key === race).flavor}</p>}
+          {race && <p style={{ color: SLATE, fontSize: "11.5px", marginTop: "8px", lineHeight: 1.5 }}>{RACE_OPTIONS.find((r) => r.key === race).flavor} <span style={{ color: CODE_VOICE }}>Race bonus: {statBonusText(raceBonus)}</span></p>}
         </div>
 
         <div style={{ marginBottom: "22px" }}>
@@ -3373,7 +3518,7 @@ function CharacterCreationScreen({ mode, onSubmit }) {
           <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
             {Object.entries(BACKGROUND_OPTIONS).map(([key, b]) => {
               const selected = background === key;
-              const bonusText = Object.entries(b.bonus).map(([k, v]) => `+${v} ${ATTRIBUTE_DEFS[k].short}`).join(" ");
+              const bonusText = statBonusText(BACKGROUND_STAT_BONUS_TABLE[key] || b.bonus);
               return pillButton(
                 key,
                 <div>
@@ -3389,6 +3534,11 @@ function CharacterCreationScreen({ mode, onSubmit }) {
             <p style={{ color: SLATE, fontSize: "11.5px", marginTop: "8px", lineHeight: 1.5 }}>
               {BACKGROUND_OPTIONS[background].flavor} <span style={{ color: DIM }}>{BACKGROUND_OPTIONS[background].npcTag}</span>
             </p>
+          )}
+          {(race || background) && mode !== "migrate" && (
+            <div style={{ marginTop: "10px", padding: "9px 10px", border: "1px solid #33291D", background: "#17120e", color: CODE_VOICE, fontSize: "12px" }}>
+              Base stat preview: {statBonusText(previewBonus)}
+            </div>
           )}
         </div>
 
