@@ -238,6 +238,36 @@ const NPC_TRAITS = [
   "Stubborn", "Suspicious", "Kind", "Ambitious", "Superstitious", "Vengeful",
 ];
 
+const INTERACTION_TYPES = new Set(["standard", "quest_decision", "climactic_dialogue"]);
+
+function currentQuestStage(quest) {
+  if (quest?.currentStage && typeof quest.currentStage === "object") return quest.currentStage;
+  if (quest?.stage && typeof quest.stage === "object") return quest.stage;
+  if (!Array.isArray(quest?.stages)) return null;
+  const stageReference = quest.currentStageId ?? quest.stageId ?? quest.currentStage ?? quest.stage;
+  if (typeof stageReference === "number") return quest.stages[stageReference] || null;
+  return quest.stages.find((stage) => stage?.id === stageReference) || null;
+}
+
+function validateInteractionType(result, quests, npcs) {
+  const requestedType = INTERACTION_TYPES.has(result?.interactionType) ? result.interactionType : "standard";
+  if (requestedType === "quest_decision") {
+    const atKeyDecision = quests.some((quest) => quest.status === "active" && currentQuestStage(quest)?.keyDecisionPoint === true);
+    return atKeyDecision ? requestedType : "standard";
+  }
+  if (requestedType === "climactic_dialogue") {
+    const involvedNpc = npcs.find((npc) => npc.id === result?.interactionNpcId);
+    return involvedNpc && (involvedNpc.trust || 0) >= 7 ? requestedType : "standard";
+  }
+  return "standard";
+}
+
+function paceNarration(narration, interactionType) {
+  if (interactionType !== "standard") return narration;
+  const paragraphs = narration.split(/\n\s*\n/).filter((paragraph) => paragraph.trim());
+  return paragraphs.slice(0, 2).join("\n\n");
+}
+
 // Fixed vocabulary of consumable effects. Claude may tag a "loot" event with one of these
 // kinds when the item is a usable curative — the actual heal amount lives here in code,
 // never in Claude's narration. Items with no kind (or an unrecognized one) are just flavor/
@@ -918,7 +948,7 @@ const TUTORIAL_SEEN_KEY = "dnd-prototype-tutorial-seen";
 const TUTORIAL_STEPS = [
   {
     title: "How this works",
-    body: "Type anything you want to try in the box at the bottom, or tap one of the suggested action buttons. Claude narrates the world and decides what happens — but every number (HP, gold, damage, prices) is handled by code, never by the AI. That split is why the ledger on the right calls itself \"code-owned.\"",
+    body: "Most turns move through the suggested action buttons. At key quest decisions and climactic conversations, a free-text box also appears so you can try anything you want. Claude narrates the world and decides what happens — but every number (HP, gold, damage, prices) is handled by code, never by the AI. That split is why the ledger on the right calls itself \"code-owned.\"",
   },
   {
     title: "HP, Level & XP",
@@ -1047,7 +1077,9 @@ CHARACTER SUMMARY also includes "name", "race", "background", "backgroundNote", 
 IMPORTANT — identity: WORLD STATE gives every NPC a stable "id" (e.g. "npc_3") and every known place a stable id inside "locations" (e.g. "loc_2"). Whenever you reference an EXISTING NPC or place in structured fields (npcUpdates, npc_relationship, shop_open, or moving to a known location), you MUST use that exact id — never their name or a paraphrase of the place. Names and display text can vary in your prose however you like; ids must be copied exactly. Only omit an id when you are introducing someone or somewhere brand new, since code assigns the id for anything new.
 
 Rules:
-- Narrate 2-4 short vivid paragraphs, second person.
+- Tag every response with interactionType: "standard", "quest_decision", or "climactic_dialogue". Use "quest_decision" only when the current stage of an active quest in CHARACTER SUMMARY is explicitly marked keyDecisionPoint: true. Use "climactic_dialogue" only for a pivotal conversation with an existing NPC whose exact id you also return as interactionNpcId; code will require that NPC's trust to be at least 7. Otherwise use "standard".
+- For "standard", keep narration quick: one short paragraph, occasionally two short paragraphs, or just one or two lines of dialogue with no scene-setting for minor moments. Routine actions such as drinks, small talk, errands, and simple purchases must not receive full scene treatment. Only "quest_decision" and "climactic_dialogue" may use unrestricted, multi-paragraph scene detail.
+- Within a scene or conversation, do not repeat the same sentence construction. In particular, avoid reusing templates such as "She/He doesn't offer X. She/He offers Y" or similar negation-then-restatement constructions. Do not default to an extended simile (such as "like a firm hand" or "the way a smith holds hot metal") to end paragraphs; vary paragraph conclusions.
 - NEVER state specific HP, gold, or XP numbers in your narration — code reports those separately.
 - NEVER contradict existing world state (dead NPCs stay dead, hostile factions stay hostile, etc).
 - Only emit an "encounter" event when the fiction genuinely calls for a fight.
@@ -1055,6 +1087,8 @@ Rules:
 
 Respond with ONLY valid JSON, no markdown fences, no preamble:
 {
+  "interactionType": "standard|quest_decision|climactic_dialogue",
+  "interactionNpcId": "exact existing NPC id when interactionType is climactic_dialogue; otherwise omit",
   "narration": "string",
   "stateUpdates": {
     "location": null,
@@ -1114,13 +1148,13 @@ For "shop_open": use this whenever the player's action would plausibly put them 
 
 For "quest_offer": most quests need no gating. Use "requiresNpcId" + "minTrust" only when the fiction genuinely implies an NPC wouldn't share this with a stranger or someone they distrust — a secret, a family matter, something risky. Code enforces the threshold; if it isn't met, the quest is silently not created even though you narrated the offer, so avoid narrating a confident "quest accepted" beat for a gated quest — narrate the NPC's actual willingness (hesitant, testing the player, holding back) and let a future turn re-offer it once trust has grown.`;
 
-const COMBAT_NARRATION_SYSTEM_PROMPT = `You are narrating one exchange of combat in a fantasy RPG. Game code has ALREADY resolved the mechanics — damage dealt, HP remaining, victory/defeat — and gives you those exact facts. Your only job is to narrate that outcome vividly in 2-3 sentences.
+const COMBAT_NARRATION_SYSTEM_PROMPT = `You are narrating one exchange of combat in a fantasy RPG. Game code has ALREADY resolved the mechanics — damage dealt, HP remaining, victory/defeat — and gives you those exact facts. Your only job is to narrate that outcome vividly in 2-3 sentences. Avoid repeating sentence constructions, negation-then-restatement templates, and extended similes as routine paragraph endings.
 
 CRITICAL: Do not invent a different outcome, different damage, or different result than what's given. You are describing what already happened, not deciding it.
 
 The facts may include "playerMissed": true (the player's attack failed to connect), "enemyMissed": true (the enemy's attack failed to connect), "playerCrit": true (the player's attack landed as a solid, exceptional hit — narrate it as such), or "playerDodged": true (an incoming attack was cleanly evaded and dealt no damage at all — narrate an actual dodge, not just a graze). They may also include "powerStrike": true (the player committed to an unusually heavy, all-in blow — narrate bigger wind-up and impact, and note they're left a little exposed), "secondWindHeal": a number (the player caught a genuine second wind and recovered that much health mid-fight — narrate a real moment of resilience, not a minor breather), or "enemyFled": true (the enemy's nerve broke entirely and they ran — this is NOT a defeat, narrate them escaping alive, rattled). If "playerDied" is true, narrate an unambiguous death. If "injuryArea" is present, make the surviving wound fit that fixed body area.
 
-Respond with ONLY valid JSON: {"narration": "string"}`;
+Respond with ONLY valid JSON: {"interactionType": "standard", "narration": "string"}`;
 
 // ---- Economy: merchants and item values. All code-owned, same philosophy as combat. ----
 // Claude only ever says WHICH merchant archetype a shop is (via shop_open's merchantType).
@@ -1621,7 +1655,10 @@ function characterSummaryForPrompt(character, quests) {
       weapon: character.equipped?.weapon?.name || "nothing",
       armor: character.equipped?.armor?.name || "nothing",
     },
-    activeQuests: quests.filter((q) => q.status === "active").map((q) => q.title),
+    activeQuests: quests.filter((q) => q.status === "active").map((q) => ({
+      title: q.title,
+      currentStage: currentQuestStage(q),
+    })),
   };
 }
 
@@ -1629,6 +1666,7 @@ export default function DMMemoryTest() {
   const [worldState, setWorldState] = useState(initialWorldState);
   const [character, setCharacter] = useState(initialCharacter);
   const [quests, setQuests] = useState([]);
+  const [interactionType, setInteractionType] = useState("standard");
   const [combat, setCombat] = useState(null); // { enemyType, enemy: {name,hp,maxHp,attack,defense} }
   const [shop, setShop] = useState(null); // { npcId, merchantType }
   const [pendingPurchase, setPendingPurchase] = useState(null); // { reason, tier, amount }
@@ -1766,7 +1804,11 @@ export default function DMMemoryTest() {
       });
     }
     if (saved.quests) setQuests(saved.quests);
-    if (saved.log) setLog(saved.log);
+    if (saved.log) {
+      setLog(saved.log);
+      const latestDmTurn = [...saved.log].reverse().find((entry) => entry.role === "dm");
+      setInteractionType(INTERACTION_TYPES.has(latestDmTurn?.interactionType) ? latestDmTurn.interactionType : "standard");
+    }
     if (saved.combat !== undefined) setCombat(saved.combat);
     setShop(null); // shop panels never persist — always resume back out in the world
     setPendingPurchase(null); // unresolved purchase prompts are transient, like shops
@@ -1938,6 +1980,7 @@ export default function DMMemoryTest() {
     setWorldState(initialWorldState);
     setCharacter(initialCharacter);
     setQuests([]);
+    setInteractionType("standard");
     setCombat(null);
     setShop(null);
     setPendingPurchase(null);
@@ -2005,7 +2048,11 @@ export default function DMMemoryTest() {
           const suggestedActions = Array.isArray(result.suggestedActions) && result.suggestedActions.length
             ? result.suggestedActions.slice(0, 3)
             : null;
-          if (narration) setLog([{ role: "dm", narration, suggestedActions: suggestedActions || FALLBACK_OPENING_ACTIONS[startingRegion] || FALLBACK_OPENING_ACTIONS.heartlands }]);
+          if (narration) {
+            const validatedType = validateInteractionType(result, [], openingWorldState.npcs);
+            setInteractionType(validatedType);
+            setLog([{ role: "dm", narration: paceNarration(narration, validatedType), suggestedActions: suggestedActions || FALLBACK_OPENING_ACTIONS[startingRegion] || FALLBACK_OPENING_ACTIONS.heartlands, interactionType: validatedType }]);
+          }
         })
         .catch((e) => {
           setError(`Opening scene fell back to regional narration because Claude was unavailable: ${e.message}`);
@@ -2503,7 +2550,8 @@ export default function DMMemoryTest() {
         }),
       }));
     }
-    setLog((prev) => [...prev, { role: "dm", narration: `${trainer.name} puts you through a focused lesson in ${ATTRIBUTE_DEFS[trainingOffer.stat].label.toLowerCase()}. The drills are punishing, but by the end your hard-won improvement is unmistakable.`, suggestedActions: null }]);
+    setInteractionType("standard");
+    setLog((prev) => [...prev, { role: "dm", narration: `${trainer.name} puts you through a focused lesson in ${ATTRIBUTE_DEFS[trainingOffer.stat].label.toLowerCase()}. The drills are punishing, but by the end your hard-won improvement is unmistakable.`, suggestedActions: null, interactionType: "standard" }]);
     pushSystemLine(`↑ ${ATTRIBUTE_DEFS[trainingOffer.stat].short} ${current} → ${nextScore} · -${cost} gold · training ${(character.dailyTrainingUsed || 0) + 1}/${character.dailyTrainingCap || DAILY_TRAINING_CAP}`);
     setTrainingOffer(null);
   }
@@ -2536,10 +2584,13 @@ export default function DMMemoryTest() {
       // values here means a partially-shaped response degrades gracefully — the turn
       // still narrates, it just doesn't update anything it didn't mention — instead of
       // throwing on the next line down (e.g. stateUpdates.reputationDelta of undefined).
-      const narration = typeof result.narration === "string" ? result.narration : "(the DM's response was missing narration text)";
+      const rawNarration = typeof result.narration === "string" ? result.narration : "(the DM's response was missing narration text)";
       const stateUpdates = result.stateUpdates && typeof result.stateUpdates === "object" ? result.stateUpdates : {};
       const events = Array.isArray(result.events) ? result.events : [];
       const suggestedActions = Array.isArray(result.suggestedActions) ? result.suggestedActions : [];
+      const validatedInteractionType = validateInteractionType(result, quests, worldState.npcs);
+      const narration = paceNarration(rawNarration, validatedInteractionType);
+      setInteractionType(validatedInteractionType);
 
       setWorldState((prev) => {
         const next = {
@@ -2656,7 +2707,7 @@ export default function DMMemoryTest() {
         setPendingSkillCheck(null);
         pushSystemLine(`${skillCheckFacts.passed ? "✓" : "✗"} ${odds.check.label} check ${skillCheckFacts.passed ? "passed" : "failed"} (${odds.chance}% chance · ${odds.difficultyTier.toUpperCase()})`);
       }
-      setLog((l) => [...l, { role: "dm", narration, suggestedActions }]);
+      setLog((l) => [...l, { role: "dm", narration, suggestedActions, interactionType: validatedInteractionType }]);
       processEvents(events);
       setLastFailedAction(null);
     } catch (e) {
@@ -2803,7 +2854,8 @@ export default function DMMemoryTest() {
 
     try {
       const result = await callModel(COMBAT_NARRATION_SYSTEM_PROMPT, JSON.stringify(facts, null, 2), 400, 1, null, (info) => pushDebugEntry(`combat:${actionType}`, info));
-      setLog((l) => [...l, { role: "dm", narration: result.narration, suggestedActions: combatEnded ? ["Look around", "Check inventory", "Continue on"] : null }]);
+      setInteractionType("standard");
+      setLog((l) => [...l, { role: "dm", narration: result.narration, suggestedActions: combatEnded ? ["Look around", "Check inventory", "Continue on"] : null, interactionType: "standard" }]);
       if (facts.enemyDefeated) pushSystemLine(`✓ Enemy defeated (+${facts.xpGained} XP, +${facts.goldGained} gold)${nextCharacter.levelUps?.length ? ` — Level up! Now level ${nextCharacter.level}; ${ATTRIBUTE_POINTS_PER_LEVEL} skill points banked.` : ""}`);
       if (facts.playerDefeated && facts.playerDied) pushSystemLine(`✝ ${combat.enemy.name} has ended your story.`);
       else if (facts.playerDefeated && facts.injuryArea) pushSystemLine(`✝ You survive at 1 HP with a ${facts.injuryArea} injury and a permanent scar.`);
@@ -3013,7 +3065,7 @@ export default function DMMemoryTest() {
                   )}
                   {rest}
                 </p>
-                {entry.suggestedActions && !pendingSkillCheck && (
+                {entry.suggestedActions && (
                   <div style={{ marginTop: "14px", display: "flex", flexWrap: "wrap", gap: "8px" }}>
                     {entry.suggestedActions.map((a, j) => (
                       <button key={j} onClick={() => submitAction(a)} disabled={loading || !!combat || !!shop || !!pendingPurchase || !!trainingOffer} style={{ background: "linear-gradient(180deg, #241D15 0%, #1A150F 100%)", border: "1px solid #4A3F2C", color: INK, padding: "7px 14px", fontFamily: DISPLAY_FONT, fontSize: "11.5px", letterSpacing: "0.03em", cursor: loading || combat || shop || pendingPurchase || trainingOffer ? "default" : "pointer", opacity: loading || combat || shop || pendingPurchase || trainingOffer ? 0.5 : 1, borderRadius: "2px" }}>
@@ -3147,12 +3199,12 @@ export default function DMMemoryTest() {
             {odds.check.label} check — {odds.chance}% likely to land <span style={{ color: DIM }}>· {odds.difficultyTier} difficulty</span>
           </div>;
         })()}
-        <form onSubmit={(e) => { e.preventDefault(); submitAction(input); }} style={{ display: "flex", borderTop: pendingSkillCheck ? "none" : "1px solid #33291D", padding: "12px 16px", gap: "10px" }}>
+        {(interactionType === "quest_decision" || interactionType === "climactic_dialogue") && <form onSubmit={(e) => { e.preventDefault(); submitAction(input); }} style={{ display: "flex", borderTop: pendingSkillCheck ? "none" : "1px solid #33291D", padding: "12px 16px", gap: "10px" }}>
           <input value={input} onChange={(e) => setInput(e.target.value)} placeholder={combat ? "Resolve combat above first..." : shop ? "Finish trading above first..." : pendingPurchase ? "Answer the purchase prompt above first..." : trainingOffer ? "Answer the training offer above first..." : "What do you do?"} disabled={loading || !!combat || !!shop || !!pendingPurchase || !!trainingOffer} style={{ flex: 1, background: "#1A1611", border: "1px solid #33291D", color: INK, padding: "10px 12px", fontFamily: BODY_FONT, fontSize: "15px", outline: "none", opacity: combat || shop || pendingPurchase || trainingOffer ? 0.4 : 1, borderRadius: "2px" }} />
           <button type="submit" disabled={loading || !!combat || !!shop || !!pendingPurchase || !!trainingOffer} style={{ background: `linear-gradient(180deg, ${BLOOD} 0%, #4A1620 100%)`, border: `1px solid ${BLOOD}`, color: INK, padding: "10px 20px", fontFamily: DISPLAY_FONT, fontSize: "12.5px", letterSpacing: "0.06em", textTransform: "uppercase", cursor: loading || combat || shop || pendingPurchase || trainingOffer ? "default" : "pointer", opacity: loading || combat || shop || pendingPurchase || trainingOffer ? 0.5 : 1, borderRadius: "2px" }}>
             Act
           </button>
-        </form>
+        </form>}
       </div>
 
       <div style={{ flex: "1 1 40%", overflowY: "auto", padding: "20px 22px", fontFamily: "ui-monospace, monospace", fontSize: "12.5px", background: "linear-gradient(180deg, #17130F 0%, #120F0B 100%)" }}>
