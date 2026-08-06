@@ -103,6 +103,49 @@ export const LORE_DATA = {
     ]
   },
 
+  desert: {
+    displayName: "The Desert",
+    pantheon: [
+      {
+        name: "Ashra, the Sun-Wyrm",
+        domain: "Creation, pride, inner fire",
+        summary: "The first dragon, said to have breathed the desert's sun into the sky and cracked the earth into dunes with her wingbeats. Believed to still burn faintly inside every dragonborn as a private inner ember passed down the bloodline. Dragonborn pride is understood theologically, not as vanity, but as carrying a literal fragment of a god."
+      },
+      {
+        name: "Vaeloth, the Truth-Scale",
+        domain: "Oaths, honesty, trade",
+        summary: "The deity invoked in trade dealings. A dragonborn's word is treated as binding because breaking it is believed to personally dim their inner ember in front of Vaeloth's notice — a private consequence rather than a public shaming."
+      },
+      {
+        name: "Karneth, the Blade-Ember",
+        domain: "Ritual dueling, controlled honorable violence",
+        summary: "Patron of dueling used specifically to settle disputes and establish truth, not conquest. Karneth's domain is the foundation of Duel-Law."
+      }
+    ],
+    customs: [
+      {
+        name: "The Scale-Oath",
+        summary: "A serious vow is sealed by ceremonially removing a single scale, marked with the oath's nature, and giving it to the other party to hold until the vow is fulfilled. Losing or destroying someone else's Scale-Oath before it's fulfilled is considered one of the gravest insults possible, symbolically extinguishing part of their inner ember before Ashra."
+      },
+      {
+        name: "Duel-Law and the Oath-Blade tradition",
+        summary: "Serious disputes are settled by formal, rule-bound, witnessed ritual duel, not to the death. Losing costs the loser their position in the dispute, permanently and publicly, not their life. Refined over generations into a genuine art form, this is the root of the Desert's continent-wide reputation for producing some of the finest duelists and swordfighters alive — a reputation belonging to the culture's peak, not to any individual dragonborn by default."
+      }
+    ],
+    history: [
+      {
+        name: "The Ember Accord",
+        summary: "Generations back, the desert's dragonborn lived as a single confederation. The split into Clan Ashkavar, Clan Nazreth, and Clan Ithran arose from disagreement over how to use their reputation as currency: Ashkavar's founders held that pride and heritage should never be softened for outsiders; Nazreth's founders believed heritage was fine privately but bad for business with skittish foreign traders; Ithran's founders simply began brokering deals for anyone willing to pay. This three-way dispute, formalized into law as the Ember Accord, is the founding document of the three-clan structure, and is remembered as Duel-Law's first great success story — proof the system could resolve even a disagreement this fundamental."
+      }
+    ],
+    mysteries: [
+      {
+        name: "The Long Ember",
+        summary: "Every true Duel-Law bout is believed to draw a sliver off the duelist's inner ember, the fragment of Ashra they carry. A single duel means nothing, but Duel-Law has been the default dispute-resolution method for the entire culture for centuries, meaning an enormous number of embers have been very slightly dimmed in the name of a system that has never once failed to resolve a dispute fairly. A small number of the oldest, most duel-scarred elders have quietly begun to notice their inner ember doesn't burn as it once did, and privately wonder whether the same may be true of the bloodline as a whole."
+      }
+    ]
+  },
+
   coast: {
     displayName: "The Coast / Archipelago",
     pantheon: [
