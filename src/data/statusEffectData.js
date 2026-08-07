@@ -14,5 +14,13 @@ export const STATUS_EFFECT_TABLE = [
   { statusId: "resist_radiant", category: "passive", scalesWith: null, description: "flat percent reduction to incoming radiant damage" },
   { statusId: "resist_poison", category: "passive", scalesWith: null, description: "flat percent reduction to poison damage/duration" },
   { statusId: "immune_fear", category: "passive", scalesWith: null, description: "target cannot be feared" },
-  { statusId: "immune_stun", category: "passive", scalesWith: null, description: "target cannot be stunned" }
+  { statusId: "immune_stun", category: "passive", scalesWith: null, description: "target cannot be stunned" } ,
+  { statusId: "hungry", category: "resource", scalesWith: null, description: "Low hunger: -1 ATK" } ,
+  { statusId: "starving", category: "resource", scalesWith: null, description: "No hunger: -3 ATK and -10% dodge" } ,
+  { statusId: "tired", category: "resource", scalesWith: null, description: "Low fatigue: -10% dodge and -5% critical chance" } ,
+  { statusId: "exhausted", category: "resource", scalesWith: null, description: "No fatigue: further risky actions require forced rest" } ,
+  { statusId: "hunger_immune", category: "buff", scalesWith: null, description: "Hunger does not drain" } ,
+  { statusId: "con_food", category: "buff", scalesWith: null, description: "+2 CON" } ,
+  { statusId: "arc_food", category: "buff", scalesWith: null, description: "+2 ARC" } ,
+  { statusId: "cha_food", category: "buff", scalesWith: null, description: "+2 CHA" }
 ];
