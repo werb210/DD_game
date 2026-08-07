@@ -31,6 +31,7 @@ import forestRoadLocation from './assets/loc_forest_road.png';
 import innLocation from './assets/loc_inn.png';
 import villageLocation from './assets/loc_village.png';
 import { LORE_DATA } from './LORE_DATA.js';
+import { WORLD_LORE } from './WORLD_LORE.js';
 import { STATUS_EFFECT_TABLE } from './data/statusEffectData.js';
 import { WEAPON_ASPECT_TABLE } from './data/weaponAspectData.js';
 import { RUNE_TABLE } from './data/runeData.js';
@@ -1699,6 +1700,7 @@ function characterSummaryForPrompt(character, quests) {
 
 export default function DMMemoryTest() {
   const [worldState, setWorldState] = useState(initialWorldState);
+  const [ledgerTab, setLedgerTab] = useState("character");
   const [character, setCharacter] = useState(initialCharacter);
   const [quests, setQuests] = useState([]);
   const [interactionType, setInteractionType] = useState("standard");
@@ -3282,6 +3284,16 @@ export default function DMMemoryTest() {
           <RavenGlyph size={14} /> Character Ledger <span style={{ color: DIM, textTransform: "none", letterSpacing: 0, fontFamily: "ui-monospace, monospace", fontSize: "10px" }}>(code-owned)</span>
         </div>
 
+        <div role="tablist" aria-label="Character Ledger sections" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px", marginBottom: "20px" }}>
+          {[['character', 'Character'], ['world', 'World']].map(([tab, label]) => (
+            <button key={tab} role="tab" aria-selected={ledgerTab === tab} onClick={() => setLedgerTab(tab)} style={{ padding: "8px", cursor: "pointer", fontFamily: DISPLAY_FONT, letterSpacing: ".08em", textTransform: "uppercase", fontSize: "10.5px", color: ledgerTab === tab ? AMBER : SLATE, background: ledgerTab === tab ? "linear-gradient(180deg, #2A2116, #17130F)" : "#100D0A", border: `1px solid ${ledgerTab === tab ? AMBER : DIM}`, boxShadow: ledgerTab === tab ? "inset 0 0 0 1px #33291D" : "none" }}>
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {ledgerTab === "character" ? <>
+
         {character.identity && (
           <LedgerSection title="Identity">
             <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
@@ -3587,6 +3599,7 @@ export default function DMMemoryTest() {
           Steel-blue lines in the story feed are code-determined outcomes. Everything above the
           divider is numeric and deterministic; everything below is Claude's qualitative memory.
         </div>
+        </> : <WorldCompendium worldState={worldState} />}
       </div>
       </div>
     </>
@@ -4393,6 +4406,57 @@ function StatBar({ value, max, color, height = 8 }) {
   return (
     <div style={{ height, borderRadius: "2px", background: "#0E0C0A", border: "1px solid #33291D", boxShadow: "inset 0 1px 3px rgba(0,0,0,0.6)", overflow: "hidden" }}>
       <div style={{ width: `${pct}%`, height: "100%", background: `linear-gradient(180deg, ${color} 0%, #0E0C0A 220%)`, transition: "width 0.3s ease" }} />
+    </div>
+  );
+}
+
+function WorldCompendium({ worldState }) {
+  const [expandedRegion, setExpandedRegion] = useState(null);
+  const discoveredRegions = new Set(Object.values(worldState.locations).filter((location) => location.discovered).map((location) => location.regionId));
+  const loreSection = (title, items, pantheon = false) => items?.length ? (
+    <div style={{ marginTop: "15px" }}>
+      <div style={{ color: AMBER, fontFamily: DISPLAY_FONT, fontSize: "10px", letterSpacing: ".12em", textTransform: "uppercase", borderBottom: `1px solid ${DIM}`, paddingBottom: "4px", marginBottom: "8px" }}>{title}</div>
+      {items.map((item) => (
+        <div key={`${item.name}-${item.title || ""}`} style={{ marginBottom: "10px", lineHeight: 1.5 }}>
+          <div style={{ color: INK, fontFamily: BODY_FONT, fontWeight: 600, fontSize: "14px" }}>{item.name}{pantheon && item.title ? `, ${item.title}` : ""}</div>
+          <div style={{ color: SLATE, fontFamily: BODY_FONT, fontSize: "13px" }}>{item.description}</div>
+        </div>
+      ))}
+    </div>
+  ) : null;
+
+  return (
+    <div>
+      <div style={{ color: SLATE, fontFamily: BODY_FONT, fontSize: "13px", lineHeight: 1.5, marginBottom: "14px" }}>Discover a location to unlock all recorded lore for its region.</div>
+      {WORLD_LORE.map((region) => {
+        const unlocked = discoveredRegions.has(region.regionId);
+        const expanded = unlocked && expandedRegion === region.regionId;
+        return (
+          <div key={region.regionId} style={{ marginBottom: "10px", border: `1px solid ${unlocked ? "#4A3F2C" : "#292620"}`, background: unlocked ? "linear-gradient(145deg, #211B14, #14110D)" : "linear-gradient(145deg, #161513, #0E0D0C)", boxShadow: unlocked ? "inset 0 0 0 1px rgba(200,155,74,.08), 0 3px 10px rgba(0,0,0,.25)" : "inset 0 0 12px rgba(0,0,0,.7)", opacity: unlocked ? 1 : .58 }}>
+            <button disabled={!unlocked} aria-expanded={expanded} onClick={() => setExpandedRegion(expanded ? null : region.regionId)} style={{ width: "100%", border: 0, background: "transparent", padding: "12px", cursor: unlocked ? "pointer" : "default", display: "flex", justifyContent: "space-between", alignItems: "center", color: unlocked ? AMBER : DIM, fontFamily: DISPLAY_FONT, letterSpacing: ".08em", textTransform: "uppercase", textAlign: "left" }}>
+              <span>{region.regionName}</span>
+              <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "9px", letterSpacing: ".06em", color: unlocked ? SLATE : DIM }}>{unlocked ? (expanded ? "close −" : "open +") : "undiscovered"}</span>
+            </button>
+            {expanded && (
+              <div style={{ borderTop: `1px solid ${DIM}`, padding: "12px", background: "linear-gradient(180deg, rgba(233,218,180,.035), transparent)" }}>
+                <div style={{ color: INK, fontFamily: BODY_FONT, fontSize: "13px" }}>{region.dominantRace} · {region.racePercent}</div>
+                <div style={{ marginTop: "12px" }}>
+                  <div style={{ color: AMBER, fontFamily: DISPLAY_FONT, fontSize: "10px", letterSpacing: ".12em", textTransform: "uppercase", marginBottom: "5px" }}>Political Structure</div>
+                  <div style={{ color: SLATE, fontFamily: BODY_FONT, fontSize: "13px", lineHeight: 1.5 }}>{region.politicalStructure}</div>
+                </div>
+                {loreSection(region.pantheon ? "Pantheon" : "Belief System", region.pantheon || region.beliefSystem, !!region.pantheon)}
+                {loreSection("Customs", region.customs)}
+                {loreSection("History", region.history)}
+                <div style={{ marginTop: "15px" }}>
+                  <div style={{ color: AMBER, fontFamily: DISPLAY_FONT, fontSize: "10px", letterSpacing: ".12em", textTransform: "uppercase", borderBottom: `1px solid ${DIM}`, paddingBottom: "4px", marginBottom: "8px" }}>Factions</div>
+                  {region.factions.map((group) => <div key={group.name} style={{ marginBottom: "10px", fontFamily: BODY_FONT, lineHeight: 1.45 }}><div style={{ color: INK, fontWeight: 600, fontSize: "14px" }}>{group.name}</div><div style={{ color: SLATE, fontSize: "13px" }}>{[group.leaderTitle, group.leaderName].filter(Boolean).join(" ")} — {group.trait}{group.description ? ` ${group.description}` : ""}</div></div>)}
+                  {region.wildcard && <div style={{ marginTop: "12px", paddingTop: "9px", borderTop: "1px dashed #4A3F2C", fontFamily: BODY_FONT }}><div style={{ color: CODE_VOICE, fontSize: "10px", textTransform: "uppercase", letterSpacing: ".1em" }}>Wildcard</div><div style={{ color: INK, fontWeight: 600, fontSize: "14px" }}>{region.wildcard.name}</div><div style={{ color: SLATE, fontSize: "13px" }}>{region.wildcard.trait}</div></div>}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
