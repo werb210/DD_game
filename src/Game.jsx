@@ -280,7 +280,13 @@ const CONSUMABLE_TABLE = {
   minor_healing: { healAmount: 12, label: "a minor restorative" },
   healing: { healAmount: 25, label: "a restorative" },
   major_healing: { healAmount: 45, label: "a potent restorative" },
-  ration: { healAmount: 8, label: "a filling meal" },
+  ration: { healAmount: 0, hungerRestore: 40, label: "Heartlands Rations" },
+  elven_bread: { healAmount: 0, hungerRestore: 100, fullHunger: true, buff: "hunger_immune", durationMinutes: 60, label: "Elven Bread" },
+  dwarven_rations: { healAmount: 0, hungerRestore: 40, buff: "con_food", attribute: "con", amount: 2, durationMinutes: 60, label: "Dwarven Trail Rations" },
+  northern_meat: { healAmount: 0, hungerRestore: 40, buff: "resist_frost", durationMinutes: 60, label: "Northern Preserved Meat" },
+  desert_flatbread: { healAmount: 0, hungerRestore: 40, buff: "arc_food", attribute: "arcane", amount: 2, durationMinutes: 30, label: "Desert Flatbread" },
+  honey_cake: { healAmount: 0, hungerRestore: 40, buff: "cha_food", attribute: "cha", amount: 2, durationMinutes: 60, label: "Halfling Honey-Cake" },
+  preserved_fish: { healAmount: 0, hungerRestore: 40, buff: "resist_poison", durationMinutes: 60, label: "Orc Preserved Fish" },
   injury_tonic: { healAmount: 0, curesInjury: true, label: "an injury-curing tonic" },
 };
 
@@ -354,7 +360,8 @@ const ATTRIBUTE_DEFS = {
 
 const ATTRIBUTE_CAP = 99;
 const ATTRIBUTE_POINTS_PER_LEVEL = 5;
-const DAILY_TRAINING_CAP = 2;
+const TRAINING_FATIGUE_COST = 4;
+const RESOURCE_TICK_MS = 7 * 60 * 1000;
 
 // Training prices are deliberately code-owned. Early growth is accessible, while the
 // quadratic tail makes instruction near heroic scores a serious investment.
@@ -716,6 +723,9 @@ function baseStatsFromAttributes(attributes) {
 // no-op.
 function getEffectiveStats(character) {
   const effectiveAttributes = { ...character.attributes };
+  Object.values(character.timedEffects || {}).forEach((effect) => {
+    if (effect.attribute && effect.expiresAt > Date.now()) effectiveAttributes[effect.attribute] += effect.amount;
+  });
   (character.injuries || []).filter((injury) => !injury.cured).forEach((injury) => {
     if (Object.prototype.hasOwnProperty.call(effectiveAttributes, injury.statKey)) {
       effectiveAttributes[injury.statKey] = Math.max(1, effectiveAttributes[injury.statKey] + injury.amount);
@@ -735,11 +745,11 @@ function getEffectiveStats(character) {
   const baseAccuracy = clamp(70 + effectiveAttributes.dex * 0.5, 40, 95);
   const strengthShortfall = Math.max(0, (weaponDef?.strRequired || 0) - effectiveAttributes.str);
   return {
-    atk: base.attack + weaponBonus,
+    atk: Math.max(0, base.attack + weaponBonus - (character.hunger <= 0 ? 3 : character.hunger < 30 ? 1 : 0)),
     def: base.defense + armorBonus + (has("iron_will") ? 2 : 0),
     maxHp: base.maxHp,
-    critChance: base.critChance,
-    dodgeChance: base.dodgeChance,
+    critChance: Math.max(0, base.critChance - (character.fatigue < 30 ? 5 : 0)),
+    dodgeChance: Math.max(0, base.dodgeChance - (character.hunger <= 0 ? 10 : 0) - (character.fatigue < 30 ? 10 : 0)),
     accuracy: Math.max(15, baseAccuracy - strengthShortfall * 5),
     critMultiplier: has("assassination") ? 2 : 1.5,
     fleeChance: has("shadow_step") ? 0.85 : 0.6,
@@ -832,8 +842,12 @@ const initialCharacter = {
   gold: 10,
   xp: 0,
   bankedSkillPoints: 0,
-  dailyTrainingUsed: 0,
-  dailyTrainingCap: DAILY_TRAINING_CAP,
+  hunger: 100,
+  maxHunger: 100,
+  fatigue: 100,
+  maxFatigue: 100,
+  timedEffects: {},
+  forcedRest: false,
   inventory: [
     { id: "item_1", name: "Rusty dagger", consumableKind: null, equipmentKey: "rusty_dagger", rarity: "common", runeSlots: 0, runes: [], quantity: 1 },
     { id: "item_2", name: "Rations", consumableKind: "ration", equipmentKey: null, rarity: "common", quantity: 3 },
@@ -1124,7 +1138,7 @@ Omit event types that don't apply this turn — an empty array is fine and commo
 
 Use skill_check_offer only when the player is about to make a genuinely uncertain, consequential attempt: persuasion or intimidation, forcing something open, picking a lock, deciphering difficult text, noticing a meaningfully hidden detail, or resisting a serious physical or mental effect. Do not use it for minor actions or ordinary choices. The governing attributes are force→STR, finesse→DEX, endure→CON, discern→INT, perceive→WIS, and sway→CHA. Emit the offer before resolving the attempt; code will ask the player how they proceed and will return authoritative SKILL CHECK FACTS on their next action. When those facts are present, narrate the stated binary pass/fail without reconsidering or grading the player's wording. On failure, always redirect with a complication, cost, or worse alternative path—never create a hard dead-end or game-over from a failed skill check. There is no partial success.
 
-For training: only emit training_offer while the player is speaking with an existing NPC whose WORLD STATE record has isTrainer true, whose trust requirement is met, and whose requested stat is listed in trainableStats and not taughtOut. Code presents the price and enforces every resource/cap check. If daily training is already exhausted, narrate that the player is too worn out and do not emit another offer. Emit day_advance whenever a full in-game day passes (sleeping, an inn stay, or a story-forced time skip); code increments the day and resets the global daily training counter.
+For training: only emit training_offer while the player is speaking with an existing NPC whose WORLD STATE record has isTrainer true, whose trust requirement is met, and whose requested stat is listed in trainableStats and not taughtOut. Code presents the price and enforces every resource/cap check. If fatigue is below the 4-point lesson cost, narrate that the player is too fatigued and do not emit another offer. Emit day_advance whenever a full in-game day passes (sleeping, an inn stay, or a story-forced time skip); code increments the day and resolves rest recovery.
 
 Whenever your narration describes the player paying for anything — a room, a meal, a bribe, goods from a merchant — you MUST include a matching "gold_spent" event with an appropriate tier. Narrating a purchase without the matching event means the cost never actually happens to the player's gold, which breaks the game's economy — never narrate spending money without it.
 
@@ -1224,6 +1238,15 @@ function canUseWeaponAspect(character, def) {
   return (character.attributes?.[aspect.scalesWith] || 0) >= aspect.statRequired;
 }
 
+function resourceStatuses(character) {
+  const statuses = [];
+  if (character.hunger <= 0) statuses.push({ id: "starving", label: "Starving", color: "#B23A3A", description: "-3 ATK and -10% dodge" });
+  else if (character.hunger < 30) statuses.push({ id: "hungry", label: "Hungry", color: "#C58A35", description: "-1 ATK" });
+  if (character.fatigue <= 0) statuses.push({ id: "exhausted", label: "Exhausted", color: "#B23A3A", description: "Forced rest required" });
+  else if (character.fatigue < 30) statuses.push({ id: "tired", label: "Tired", color: "#77808C", description: "-10% dodge and -5% crit" });
+  return statuses;
+}
+
 function getStatusDef(statusId) {
   return STATUS_EFFECT_TABLE.find((status) => status.statusId === statusId) || null;
 }
@@ -1280,6 +1303,12 @@ const ITEM_VALUE_TABLE = {
   healing: 18,
   major_healing: 40,
   ration: 4,
+  elven_bread: 18,
+  dwarven_rations: 8,
+  northern_meat: 8,
+  desert_flatbread: 8,
+  honey_cake: 8,
+  preserved_fish: 8,
   // equipment
   rusty_dagger: 6,
   steel_dagger: 16,
@@ -1323,6 +1352,12 @@ const MERCHANT_TYPES = {
     goldRegenPerVisit: 15,
     stock: [
       { key: "ration", quantity: 6 },
+      { key: "elven_bread", quantity: 2 },
+      { key: "dwarven_rations", quantity: 2 },
+      { key: "northern_meat", quantity: 2 },
+      { key: "desert_flatbread", quantity: 2 },
+      { key: "honey_cake", quantity: 2 },
+      { key: "preserved_fish", quantity: 2 },
       { key: "minor_healing", quantity: 3 },
       { key: "rusty_dagger", quantity: 2 },
       { key: "robes", quantity: 2 },
@@ -1644,7 +1679,7 @@ function characterSummaryForPrompt(character, quests) {
     regionalPassive: character.regionalPassive || null,
     level: character.level,
     condition: hpStatus,
-    trainingStatus: (character.dailyTrainingUsed || 0) >= (character.dailyTrainingCap || DAILY_TRAINING_CAP) ? "worn out for today" : "able to train today",
+    trainingStatus: character.fatigue < TRAINING_FATIGUE_COST ? "too fatigued to train" : "able to train",
     hasBankedSkillPoints: (character.bankedSkillPoints || 0) > 0,
     notableTraits, // for narrative color only — never cite the numbers behind these
     narrativeAbilities, // flavor-only unlocked traits — never a hard mechanical gate
@@ -1707,6 +1742,20 @@ export default function DMMemoryTest() {
   const [identityMode, setIdentityMode] = useState("new"); // "new" = fresh game, "migrate" = an existing save from before this system existed
   const [tutorialStep, setTutorialStep] = useState(0);
   const scrollRef = useRef(null);
+
+  // Hunger and fatigue share one active-play clock. Fractional fatigue preserves the
+  // exact 0.375 relative rate and remains saveable like every other character field.
+  useEffect(() => {
+    if (!saveChecked || needsIdentity || pauseOpen || character.isDead) return undefined;
+    const timer = window.setInterval(() => {
+      setCharacter((current) => {
+        const immune = current.timedEffects?.hunger_immune?.expiresAt > Date.now();
+        const fatigue = clamp(current.fatigue - 0.375, 0, current.maxFatigue);
+        return { ...current, hunger: immune ? current.hunger : clamp(current.hunger - 1, 0, current.maxHunger), fatigue, forcedRest: current.forcedRest || fatigue === 0 };
+      });
+    }, RESOURCE_TICK_MS);
+    return () => window.clearInterval(timer);
+  }, [saveChecked, needsIdentity, pauseOpen, character.isDead]);
 
   function pushDebugEntry(actionLabel, info) {
     setDebugLog((log) => {
@@ -1794,8 +1843,12 @@ export default function DMMemoryTest() {
         isDead: false,
         death: null,
         bankedSkillPoints: saved.character.bankedSkillPoints ?? migratedPendingPoints,
-        dailyTrainingUsed: saved.character.dailyTrainingUsed ?? 0,
-        dailyTrainingCap: saved.character.dailyTrainingCap ?? DAILY_TRAINING_CAP,
+        hunger: clamp(saved.character.hunger ?? 100, 0, 100),
+        maxHunger: 100,
+        fatigue: clamp(saved.character.fatigue ?? 100, 0, 100),
+        maxFatigue: 100,
+        timedEffects: saved.character.timedEffects || {},
+        forcedRest: saved.character.forcedRest || false,
         startingRegion: inferredStartingRegion,
         regionalPassive: saved.character.regionalPassive || { ...REGIONS_TABLE[inferredStartingRegion].passiveAbility },
         ...restOfSavedCharacter,
@@ -2232,6 +2285,7 @@ export default function DMMemoryTest() {
     const scaledHeal = Math.round(effect.healAmount * RARITY_TIERS[rarityOf(item)].statMult);
     const healedAmount = Math.min(scaledHeal, maxHp - character.hp);
     const newHp = character.hp + healedAmount;
+    const hungerGained = Math.min(effect.hungerRestore || 0, character.maxHunger - character.hunger);
     const nextInventory = [...character.inventory];
     if (item.quantity > 1) {
       nextInventory[idx] = { ...item, quantity: item.quantity - 1 };
@@ -2242,11 +2296,15 @@ export default function DMMemoryTest() {
     setCharacter((c) => ({
       ...c,
       hp: newHp,
+      hunger: effect.fullHunger ? c.maxHunger : clamp(c.hunger + (effect.hungerRestore || 0), 0, c.maxHunger),
+      timedEffects: effect.buff ? { ...(c.timedEffects || {}), [effect.buff]: { attribute: effect.attribute, amount: effect.amount, expiresAt: Date.now() + effect.durationMinutes * 60 * 1000 } } : c.timedEffects,
       inventory: nextInventory,
       injuries: effect.curesInjury ? (c.injuries || []).filter((_, index) => index !== 0) : c.injuries,
     }));
     pushSystemLine(
-      effect.curesInjury
+      effect.hungerRestore
+        ? `+ Ate ${item.name}: restored ${hungerGained} Hunger (${Math.min(character.maxHunger, character.hunger + effect.hungerRestore)}/${character.maxHunger})${effect.buff ? ` · ${effect.buff} active for ${effect.durationMinutes} minutes` : ""}`
+        : effect.curesInjury
         ? `+ Used ${item.name}: your oldest injury has healed (the scar remains).`
         : healedAmount > 0
         ? `+ Used ${item.name}: healed ${healedAmount} HP (${newHp}/${maxHp})`
@@ -2334,6 +2392,10 @@ export default function DMMemoryTest() {
     let combatStartedThisTurn = combat;
     (events || []).forEach((event) => {
       if (event.type === "encounter" && !combatStartedThisTurn) {
+        if (character.forcedRest || character.fatigue <= 0) {
+          pushSystemLine(`You are exhausted and must rest before facing further danger.`);
+          return;
+        }
         const enemyDef = ENEMY_TABLE[event.enemyType] || ENEMY_TABLE.goblin;
         const severity = severityFor(enemyDef);
         setCombat({
@@ -2345,6 +2407,7 @@ export default function DMMemoryTest() {
           secondWindUsed: false,
         });
         combatStartedThisTurn = true;
+        setCharacter((current) => { const fatigue = clamp(current.fatigue - 2, 0, current.maxFatigue); return { ...current, hunger: clamp(current.hunger - 3, 0, current.maxHunger), fatigue, forcedRest: current.forcedRest || fatigue === 0 }; });
         pushSystemLine(`⚔ A ${enemyDef.name.toLowerCase()} attacks! (${severity.toUpperCase()} threat · HP ${enemyDef.hp}, ATK ${enemyDef.attack}, DEF ${enemyDef.defense})`);
       } else if (event.type === "loot") {
         // Only recognize consumableKind/equipmentKey if they're one of the fixed,
@@ -2482,8 +2545,8 @@ export default function DMMemoryTest() {
         const lesson = trainer?.trainableStats?.find((entry) => entry.stat === stat);
         if (!trainer?.isTrainer || !lesson || (trainer.trust || 0) < (trainer.trustRequired || 0) || trainer.taughtOut?.[stat]) {
           pushSystemLine(`⚠ Invalid training offer was ignored.`);
-        } else if ((character.dailyTrainingUsed || 0) >= (character.dailyTrainingCap || DAILY_TRAINING_CAP)) {
-          pushSystemLine(`You're worn out for today. Rest before training again.`);
+        } else if (character.fatigue < TRAINING_FATIGUE_COST) {
+          pushSystemLine(`You are too fatigued to train. Rest before taking another lesson.`);
         } else {
           setTrainingOffer({ npcId: trainer.id, stat });
         }
@@ -2501,9 +2564,10 @@ export default function DMMemoryTest() {
         });
       } else if (event.type === "day_advance") {
         setWorldState((prev) => ({ ...prev, day: (prev.day || 1) + 1 }));
-        setCharacter((prev) => ({ ...prev, dailyTrainingUsed: 0, injuries: (prev.injuries || []).slice(1) }));
+        const camping = /camp/i.test(event.reason || "");
+        setCharacter((prev) => ({ ...prev, fatigue: camping ? clamp(prev.fatigue + 60, 0, prev.maxFatigue) : prev.maxFatigue, forcedRest: false, injuries: (prev.injuries || []).slice(1) }));
         setTrainingOffer(null);
-        pushSystemLine(`☀ A new day begins${event.reason ? ` — ${event.reason}` : ""}. Training stamina restored.`);
+        pushSystemLine(`☀ A new day begins${event.reason ? ` — ${event.reason}` : ""}. ${camping ? "Camping restores 60 Fatigue." : "Fatigue fully restored."}`);
         if ((character.injuries || []).length > 0) pushSystemLine(`+ A full rest heals your oldest injury; its scar remains.`);
       } else if (event.type === "skill_check_offer") {
         if (SKILL_CHECK_TYPES[event.checkType]) {
@@ -2524,7 +2588,7 @@ export default function DMMemoryTest() {
     if (!trainer?.isTrainer || !lesson || (trainer.trust || 0) < (trainer.trustRequired || 0)) failure = "This trainer is not willing or able to teach you.";
     else if (trainer.taughtOut?.[trainingOffer.stat] || current >= lesson.maxLevel) failure = `${trainer.name} has taught you all they know about ${ATTRIBUTE_DEFS[trainingOffer.stat].label}.`;
     else if ((character.bankedSkillPoints || 0) <= 0) failure = "You have no banked skill points to invest.";
-    else if ((character.dailyTrainingUsed || 0) >= (character.dailyTrainingCap || DAILY_TRAINING_CAP)) failure = "You're worn out for today.";
+    else if (character.fatigue < TRAINING_FATIGUE_COST) failure = "You are too fatigued to train.";
     else if (character.gold < cost) failure = `You need ${cost} gold for this lesson.`;
     if (failure) {
       pushSystemLine(failure);
@@ -2537,7 +2601,9 @@ export default function DMMemoryTest() {
       ...prev,
       gold: prev.gold - cost,
       bankedSkillPoints: prev.bankedSkillPoints - 1,
-      dailyTrainingUsed: (prev.dailyTrainingUsed || 0) + 1,
+      hunger: clamp(prev.hunger - 1, 0, prev.maxHunger),
+      fatigue: clamp(prev.fatigue - TRAINING_FATIGUE_COST, 0, prev.maxFatigue),
+      forcedRest: prev.fatigue - TRAINING_FATIGUE_COST <= 0,
       attributes: { ...prev.attributes, [trainingOffer.stat]: nextScore },
     }));
     if (nextScore >= lesson.maxLevel) {
@@ -2552,12 +2618,16 @@ export default function DMMemoryTest() {
     }
     setInteractionType("standard");
     setLog((prev) => [...prev, { role: "dm", narration: `${trainer.name} puts you through a focused lesson in ${ATTRIBUTE_DEFS[trainingOffer.stat].label.toLowerCase()}. The drills are punishing, but by the end your hard-won improvement is unmistakable.`, suggestedActions: null, interactionType: "standard" }]);
-    pushSystemLine(`↑ ${ATTRIBUTE_DEFS[trainingOffer.stat].short} ${current} → ${nextScore} · -${cost} gold · training ${(character.dailyTrainingUsed || 0) + 1}/${character.dailyTrainingCap || DAILY_TRAINING_CAP}`);
+    pushSystemLine(`↑ ${ATTRIBUTE_DEFS[trainingOffer.stat].short} ${current} → ${nextScore} · -${cost} gold · -1 Hunger · -4 Fatigue`);
     setTrainingOffer(null);
   }
 
   async function submitAction(action) {
     if (!action.trim() || loading || combat || shop || pendingPurchase || trainingOffer) return;
+    if ((character.forcedRest || character.fatigue <= 0) && !/\b(rest|sleep|camp|inn)\b/i.test(action)) {
+      pushSystemLine(`You are exhausted. A forced rest is required before you can take further risky actions.`);
+      return;
+    }
     setLoading(true);
     setError(null);
     setLog((l) => [...l, { role: "player", text: action }]);
@@ -2632,7 +2702,7 @@ export default function DMMemoryTest() {
             const destination = next.locations[next.locationId];
             const days = next.locations[prevLocationId]?.regionId === destination.regionId ? 1 : 3;
             next.day += days;
-            setCharacter((current) => ({ ...current, dailyTrainingUsed: 0 }));
+            setCharacter((current) => { const fatigue = clamp(current.fatigue - 3, 0, current.maxFatigue); return { ...current, hunger: clamp(current.hunger - 2, 0, current.maxHunger), fatigue, forcedRest: current.forcedRest || fatigue === 0 }; });
             setTrainingOffer(null);
             pushSystemLine(days === 1
               ? `→ A day passes reaching ${destination.name}.`
@@ -3240,7 +3310,7 @@ export default function DMMemoryTest() {
           </LedgerSection>
         )}
 
-        <LedgerSection title="Level & HP">
+        <LedgerSection title="Stats & Resources">
           <div style={{ color: INK }}>
             Level {character.level}
             {character.bankedSkillPoints > 0 && (
@@ -3255,6 +3325,14 @@ export default function DMMemoryTest() {
           <div style={{ marginTop: "4px" }}>
             <StatBar value={character.hp} max={characterEffStats.maxHp} color={character.hp <= characterEffStats.maxHp * 0.3 ? WOUND : BLOOD} />
           </div>
+          <div style={{ marginTop: "10px", color: AMBER }}>Hunger {Math.floor(character.hunger)}/{character.maxHunger}</div>
+          <StatBar value={character.hunger} max={character.maxHunger} color="#C58A35" />
+          <div style={{ marginTop: "8px", color: SLATE }}>Fatigue {Math.floor(character.fatigue)}/{character.maxFatigue}</div>
+          <StatBar value={character.fatigue} max={character.maxFatigue} color="#77808C" />
+          <div style={{ display: "flex", gap: "5px", flexWrap: "wrap", marginTop: "9px" }}>
+            {resourceStatuses(character).map((status) => <span key={status.id} title={status.description} style={{ border: `1px solid ${status.color}`, color: status.color, padding: "2px 6px", fontSize: "10px", cursor: "help" }}>● {status.label}</span>)}
+            {Object.entries(character.timedEffects || {}).filter(([, effect]) => effect.expiresAt > Date.now()).map(([id]) => { const def = getStatusDef(id); return def ? <span key={id} title={def.description} style={{ border: `1px solid ${CODE_VOICE}`, color: CODE_VOICE, padding: "2px 6px", fontSize: "10px", cursor: "help" }}>● {id.replaceAll("_", " ")}</span> : null; })}
+          </div>
           <div style={{ marginTop: "8px", color: SLATE, fontSize: "11px", display: "flex", alignItems: "center", gap: "5px", flexWrap: "wrap" }}>
             XP {character.xp} / {xpToNextLevel(character.level)} · ATK {characterEffStats.atk} · <PixelSprite src={shieldIcon} alt="" size={16} /> DEF {characterEffStats.def}
           </div>
@@ -3268,8 +3346,7 @@ export default function DMMemoryTest() {
 
         <LedgerSection title="Training">
           <div style={{ color: INK }}>Banked skill points: <span style={{ color: AMBER }}>{character.bankedSkillPoints || 0}</span></div>
-          <div style={{ color: CODE_VOICE, marginTop: "3px" }}>Training: {character.dailyTrainingUsed || 0}/{character.dailyTrainingCap || DAILY_TRAINING_CAP} today</div>
-          <div style={{ color: DIM, fontSize: "10.5px", marginTop: "3px" }}>Day {worldState.day || 1} · {(character.dailyTrainingCap || DAILY_TRAINING_CAP) - (character.dailyTrainingUsed || 0)} session(s) remaining</div>
+          <div style={{ color: CODE_VOICE, marginTop: "3px" }}>Each session costs 4 Fatigue · {Math.floor(character.fatigue / TRAINING_FATIGUE_COST)} session(s) affordable</div>
         </LedgerSection>
 
         <LedgerSection title="Attributes">
@@ -3382,7 +3459,7 @@ export default function DMMemoryTest() {
                       <span style={{ color: nameColor }}>• {item.name}</span>
                       {rarity.label !== "Common" && <span style={{ color: nameColor, fontSize: "10px", marginLeft: "5px" }}>({rarity.label})</span>}
                       {item.quantity > 1 && <span style={{ color: SLATE }}> ×{item.quantity}</span>}
-                      {isConsumable && <span style={{ color: CODE_VOICE, fontSize: "10.5px", marginLeft: "6px" }}>{CONSUMABLE_TABLE[item.consumableKind].curesInjury ? "(cures one injury)" : `(+${Math.round(CONSUMABLE_TABLE[item.consumableKind].healAmount * rarity.statMult)} HP)`}</span>}
+                      {isConsumable && <span style={{ color: CODE_VOICE, fontSize: "10.5px", marginLeft: "6px" }}>{CONSUMABLE_TABLE[item.consumableKind].curesInjury ? "(cures one injury)" : CONSUMABLE_TABLE[item.consumableKind].hungerRestore ? `(+${CONSUMABLE_TABLE[item.consumableKind].hungerRestore} Hunger)` : `(+${Math.round(CONSUMABLE_TABLE[item.consumableKind].healAmount * rarity.statMult)} HP)`}</span>}
                       {equipDef && <span style={{ color: CODE_VOICE, fontSize: "10.5px", marginLeft: "6px" }}>(+{Math.round((equipDef.slot === "weapon" ? equipDef.atkBonus : equipDef.defBonus) * rarity.statMult)} {equipDef.slot === "weapon" ? "ATK" : "DEF"})</span>}
                     </div>
                   </div>
@@ -4292,16 +4369,15 @@ function TrainingPanel({ trainer, stat, character, onAccept, onDecline }) {
   const lesson = trainer.trainableStats.find((entry) => entry.stat === stat);
   const current = character.attributes[stat];
   const cost = trainingCostFor(current);
-  const cap = character.dailyTrainingCap || DAILY_TRAINING_CAP;
   const reason = current >= lesson.maxLevel ? `${trainer.name} has taught you all they know.`
     : (character.bankedSkillPoints || 0) <= 0 ? "No banked skill points."
-    : (character.dailyTrainingUsed || 0) >= cap ? "You're worn out for today."
+    : character.fatigue < TRAINING_FATIGUE_COST ? "You are too fatigued to train."
     : character.gold < cost ? `You need ${cost} gold.` : null;
   return (
     <div style={{ margin: "20px 0", padding: "16px", border: `2px solid ${AMBER}`, background: "linear-gradient(180deg, #292216 0%, #1C1710 100%)", borderRadius: "3px" }}>
       <div style={{ fontFamily: DISPLAY_FONT, color: AMBER, marginBottom: "7px" }}><RavenGlyph size={12} /> Training with {trainer.name}</div>
       <div style={{ color: INK, marginBottom: "5px" }}>{ATTRIBUTE_DEFS[stat].label} {current} → {current + 1}</div>
-      <div style={{ color: SLATE, fontFamily: "ui-monospace, monospace", fontSize: "11px", marginBottom: "12px" }}>{cost} gold · 1 banked skill point · session {(character.dailyTrainingUsed || 0) + 1}/{cap}</div>
+      <div style={{ color: SLATE, fontFamily: "ui-monospace, monospace", fontSize: "11px", marginBottom: "12px" }}>{cost} gold · 1 banked skill point · 4 Fatigue</div>
       {reason && <div style={{ color: WOUND, marginBottom: "10px" }}>{reason}</div>}
       <div style={{ display: "flex", gap: "8px" }}>
         <button onClick={onAccept} disabled={!!reason} style={{ background: reason ? "transparent" : `linear-gradient(180deg, ${BLOOD} 0%, #4A1620 100%)`, border: `1px solid ${reason ? DIM : BLOOD}`, color: reason ? DIM : INK, padding: "8px 16px", cursor: reason ? "default" : "pointer", fontFamily: DISPLAY_FONT }}>Accept lesson</button>
