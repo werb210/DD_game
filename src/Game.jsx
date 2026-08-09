@@ -36,6 +36,7 @@ import { STATUS_EFFECT_TABLE } from './data/statusEffectData.js';
 import { WEAPON_ASPECT_TABLE } from './data/weaponAspectData.js';
 import { RUNE_TABLE } from './data/runeData.js';
 import { FACTION_IDS, adjustFactionReputation, getFactionTier, seedFactionReputation } from './data/factionReputation.js';
+import { AVAILABLE_OCCUPATIONS, SLOT_SCALING, WARRIOR_PATHS, WARRIOR_THRESHOLDS, WARRIOR_TITLES, availableWeaponMoves, freshWarrior, freshWarriorChoices, pendingWarriorChoice, rankForWarriorXp, slotIsUnlocked, warriorPassiveBonuses, warriorSlots, warriorXpGain } from './data/warriorOccupation.js';
 
 // ---- Design tokens ----
 // Grimdark medieval reskin: cold iron, old blood, tarnished gold leaf on parchment ink.
@@ -151,6 +152,7 @@ const EQUIPMENT_SPRITES = {
   plate_armor: plateIcon, starting_sword: swordIcon, starting_axe: axeIcon,
   starting_spear: spearIcon, starting_bow: bowIcon, starting_staff: staffIcon,
   starting_hammer: hammerIcon,
+  wooden_shield: shieldIcon, iron_shield: shieldIcon,
 };
 
 function locationSpriteFor(name = "") {
@@ -194,10 +196,10 @@ function RavenGlyph({ size = 14, color = AMBER, style = {} }) {
 // ---- Fixed, code-owned game tables. Claude never sees or sets these numbers. ----
 
 const ENEMY_TABLE = {
-  goblin: { name: "Goblin", hp: 18, attack: 4, defense: 1, xpReward: 15, goldReward: 6 },
-  wolf: { name: "Wolf", hp: 14, attack: 5, defense: 0, xpReward: 12, goldReward: 3 },
-  bandit: { name: "Bandit", hp: 26, attack: 6, defense: 2, xpReward: 22, goldReward: 14 },
-  skeleton: { name: "Skeleton", hp: 20, attack: 5, defense: 3, xpReward: 18, goldReward: 8 },
+  goblin: { name: "Goblin", hp: 18, attack: 4, defense: 1, challengeRating: 1, xpReward: 15, goldReward: 6 },
+  wolf: { name: "Wolf", hp: 14, attack: 5, defense: 0, challengeRating: 1, xpReward: 12, goldReward: 3 },
+  bandit: { name: "Bandit", hp: 26, attack: 6, defense: 2, challengeRating: 2, xpReward: 22, goldReward: 14 },
+  skeleton: { name: "Skeleton", hp: 20, attack: 5, defense: 3, challengeRating: 2, xpReward: 18, goldReward: 8 },
 };
 
 const SEVERITY_TIERS = {
@@ -411,6 +413,8 @@ const EQUIPMENT_TABLE = {
   leather_armor: { slot: "armor", defBonus: 2 },
   chainmail: { slot: "armor", defBonus: 3 },
   plate_armor: { slot: "armor", defBonus: 5 },
+  wooden_shield: { slot: "shield", defBonus: 1 },
+  iron_shield: { slot: "shield", defBonus: 2 },
   // Starting-tier weapons offered at character creation. All deliberately atkBonus: 1,
   // same as rusty_dagger — picking a spear over a sword is a flavor choice, not a power
   // choice, so no starting weapon type is objectively better than another.
@@ -812,21 +816,25 @@ function getEffectiveStats(character) {
   const base = baseStatsFromAttributes(effectiveAttributes);
   const weaponItem = character.equipped?.weapon;
   const armorItem = character.equipped?.armor;
+  const shieldItem = character.equipped?.shield;
   const weaponDef = weaponItem ? EQUIPMENT_TABLE[weaponItem.equipmentKey] : null;
   const armorDef = armorItem ? EQUIPMENT_TABLE[armorItem.equipmentKey] : null;
   const weaponRarityMult = weaponItem ? RARITY_TIERS[rarityOf(weaponItem)].statMult : 1;
   const armorRarityMult = armorItem ? RARITY_TIERS[rarityOf(armorItem)].statMult : 1;
   const weaponBonus = weaponDef ? Math.round(weaponDef.atkBonus * weaponRarityMult) : 0;
   const armorBonus = armorDef ? Math.round(armorDef.defBonus * armorRarityMult) : 0;
+  const shieldDef = shieldItem ? EQUIPMENT_TABLE[shieldItem.equipmentKey] : null;
+  const shieldBonus = shieldDef ? Math.round(shieldDef.defBonus * RARITY_TIERS[rarityOf(shieldItem)].statMult) : 0;
   const unlocked = getUnlockedAbilities(effectiveAttributes);
   const has = (key) => unlocked.some((a) => a.key === key);
   const baseAccuracy = clamp(70 + effectiveAttributes.dex * 0.5, 40, 95);
   const strengthShortfall = Math.max(0, (weaponDef?.strRequired || 0) - effectiveAttributes.str);
+  const occupation = warriorPassiveBonuses(character);
   return {
-    atk: Math.max(0, base.attack + weaponBonus - (character.hunger <= 0 ? 3 : character.hunger < 30 ? 1 : 0)),
-    def: base.defense + armorBonus + (has("iron_will") ? 2 : 0),
-    maxHp: base.maxHp,
-    critChance: Math.max(0, base.critChance - (character.fatigue < 30 ? 5 : 0)),
+    atk: Math.max(0, base.attack + weaponBonus + occupation.atk - (character.hunger <= 0 ? 3 : character.hunger < 30 ? 1 : 0)),
+    def: base.defense + armorBonus + shieldBonus + occupation.def + (has("iron_will") ? 2 : 0),
+    maxHp: base.maxHp + occupation.maxHp,
+    critChance: Math.max(0, base.critChance + occupation.critChance - (character.fatigue < 30 ? 5 : 0)),
     dodgeChance: Math.max(0, base.dodgeChance - (character.hunger <= 0 ? 10 : 0) - (character.fatigue < 30 ? 10 : 0)),
     accuracy: Math.max(15, baseAccuracy - strengthShortfall * 5),
     critMultiplier: has("assassination") ? 2 : 1.5,
@@ -930,12 +938,16 @@ const initialCharacter = {
     { id: "item_1", name: "Rusty dagger", consumableKind: null, equipmentKey: "rusty_dagger", rarity: "common", runeSlots: 0, runes: [], quantity: 1 },
     { id: "item_2", name: "Rations", consumableKind: "ration", equipmentKey: null, rarity: "common", quantity: 3 },
   ],
-  equipped: { weapon: null, armor: null },
+  equipped: { weapon: null, armor: null, shield: null },
   injuries: [],
   scars: [],
   isDead: false,
   death: null,
   factionReputation: seedFactionReputation("heartlands"),
+  occupations: { primary: freshWarrior(), secondary: null, tertiary: null },
+  warriorChoices: freshWarriorChoices(),
+  occupationAbilities: ["brace"],
+  warriorDailyUses: {},
 };
 
 const LORE_REGION_KEY = {
@@ -1928,7 +1940,6 @@ export default function DMMemoryTest() {
         || WORLD_MAP[saved.worldState?.locationId]?.regionId
         || "heartlands";
       setCharacter({
-        equipped: { weapon: null, armor: null },
         injuries: [],
         scars: [],
         isDead: false,
@@ -1946,7 +1957,12 @@ export default function DMMemoryTest() {
           ...seedFactionReputation(inferredStartingRegion),
           ...(saved.character.factionReputation || {}),
         },
+        warriorDailyUses: {},
         ...restOfSavedCharacter,
+        occupations: saved.character.occupations || { primary: freshWarrior(), secondary: null, tertiary: null },
+        warriorChoices: { ...freshWarriorChoices(), ...(saved.character.warriorChoices || {}) },
+        occupationAbilities: [...new Set([...(saved.character.occupationAbilities || []), "brace"])],
+        equipped: { weapon: null, armor: null, shield: null, ...(saved.character.equipped || {}) },
         attributes: migratedAttributes,
         inventory: migratedInventory,
       });
@@ -2501,9 +2517,14 @@ export default function DMMemoryTest() {
           severity,
           threatScore: threatScoreFor(enemyDef),
           secondWindUsed: false,
+          openingStrikeUsed: false,
+          guardUpUsed: false,
+          oathStrikeUsed: false,
+          warriorSecondWindUsed: false,
+          unbroken: false,
         });
         combatStartedThisTurn = true;
-        setCharacter((current) => { const fatigue = clamp(current.fatigue - 2, 0, current.maxFatigue); return { ...current, hunger: clamp(current.hunger - 3, 0, current.maxHunger), fatigue, forcedRest: current.forcedRest || fatigue === 0 }; });
+        setCharacter((current) => { const reduction = warriorPassiveBonuses(current).combatFatigueReduction; const fatigue = clamp(current.fatigue - Math.max(0, 2 - reduction), 0, current.maxFatigue); return { ...current, hunger: clamp(current.hunger - 3, 0, current.maxHunger), fatigue, forcedRest: current.forcedRest || fatigue === 0 }; });
         pushSystemLine(`⚔ A ${enemyDef.name.toLowerCase()} attacks! (${severity.toUpperCase()} threat · HP ${enemyDef.hp}, ATK ${enemyDef.attack}, DEF ${enemyDef.defense})`);
       } else if (event.type === "loot") {
         // Only recognize consumableKind/equipmentKey if they're one of the fixed,
@@ -2898,6 +2919,10 @@ export default function DMMemoryTest() {
     const effStats = getEffectiveStats(nextCharacter);
     const playerHitChance = hitChanceFor(effStats.accuracy, 0);
     const enemyBaseHitChance = clamp(hitChanceFor(70, effStats.dodgeChance * 1.2), 10, 90);
+    const warriorSlot = warriorSlots(nextCharacter)[0];
+    const warriorScale = SLOT_SCALING[warriorSlot] || 1;
+    const hasWarriorPath = (rank, choice) => nextCharacter.warriorChoices?.[`rank${rank}`] === choice && (nextCharacter.occupations?.[warriorSlot]?.rank || 0) >= rank;
+    const today = worldState.day || 1;
 
     if (actionType === "flee") {
       const escaped = Math.random() < effStats.fleeChance;
@@ -2912,6 +2937,15 @@ export default function DMMemoryTest() {
         facts.enemyHitChance = enemyBaseHitChance;
         facts.playerHpRemaining = nextCharacter.hp;
       }
+    } else if (actionType === "warrior_second_wind") {
+      if (hasWarriorPath(3, "B") && !combat.warriorSecondWindUsed) {
+        const healAmt = Math.min(Math.round(effStats.maxHp * 0.2 * warriorScale), effStats.maxHp - nextCharacter.hp);
+        nextCharacter.hp += healAmt;
+        facts.secondWindHeal = healAmt;
+      }
+    } else if (actionType === "unbroken") {
+      nextCharacter.warriorDailyUses = { ...(nextCharacter.warriorDailyUses || {}), unbroken: today };
+      facts.unbroken = true;
     } else if (actionType === "second_wind") {
       // Code-resolved, once per battle — the button itself is only ever shown while
       // combat.secondWindUsed is still false, but guard here too in case of a stale click.
@@ -2928,13 +2962,20 @@ export default function DMMemoryTest() {
       facts.enemyHitChance = enemyBaseHitChance;
       facts.playerHpRemaining = nextCharacter.hp;
     } else {
-      const incomingDefenseBonus = actionType === "defend" ? Math.floor(effStats.def / 2) + 3 : 0;
+      const brace = actionType === "brace";
+      const guardUp = actionType === "guard_up" && hasWarriorPath(2, "B") && !combat.guardUpUsed;
+      const incomingDefenseBonus = actionType === "defend" || brace ? Math.floor(effStats.def / 2) + (brace ? 5 : 3) : 0;
       // Power Strike trades defense for damage: a bigger hit now, but a weaker guard on
       // the counter that follows if the enemy is still standing.
       const isPowerStrike = actionType === "power_strike" && effStats.hasPowerStrike;
-      if (actionType === "attack" || isPowerStrike) {
-        const atk = isPowerStrike ? Math.round(effStats.atk * 1.6) : effStats.atk;
-        const attackHitChance = isPowerStrike ? Math.max(15, playerHitChance - 20) : playerHitChance;
+      const oathStrike = actionType === "oath_strike" && hasWarriorPath(3, "A") && !combat.oathStrikeUsed;
+      const warlordCommand = actionType === "warlord_command" && hasWarriorPath(4, "A") && nextCharacter.warriorDailyUses?.warlordCommand !== today;
+      const weaponMove = actionType.startsWith("move:");
+      if (actionType === "attack" || isPowerStrike || oathStrike || warlordCommand || weaponMove) {
+        const opening = hasWarriorPath(2, "A") && !combat.openingStrikeUsed;
+        const multiplier = (isPowerStrike ? 1.6 : warlordCommand ? 1 + 0.75 * warriorScale : opening ? 1 + 0.25 * warriorScale : 1);
+        const atk = Math.round(effStats.atk * multiplier);
+        const attackHitChance = oathStrike || warlordCommand ? 100 : isPowerStrike ? Math.max(15, playerHitChance - 20) : Math.min(100, playerHitChance + (opening ? 10 * warriorScale : 0));
         const { dmg, crit, missed } = rollOutgoingHit(atk, enemy.defense, effStats.critChance, attackHitChance, effStats.critMultiplier);
         const relevantStat = isPowerStrike ? nextCharacter.attributes.str : Math.max(nextCharacter.attributes.str || 1, nextCharacter.attributes.arcane || 1);
         const finalDmg = applyTrivializationRule({ attackerStat: relevantStat, defenderStat: enemy.defense || 1, attackerLevel: nextCharacter.level, defenderLevel: combat.severity === "mythic" ? 5 : combat.severity === "legendary" ? 4 : combat.severity === "epic" ? 3 : combat.severity === "rare" ? 2 : 1, outgoingDamage: dmg });
@@ -2945,6 +2986,19 @@ export default function DMMemoryTest() {
         facts.playerHitChance = attackHitChance;
         facts.critChance = effStats.critChance;
         facts.powerStrike = isPowerStrike;
+        facts.warriorAttack = true;
+        if (warlordCommand) nextCharacter.warriorDailyUses = { ...(nextCharacter.warriorDailyUses || {}), warlordCommand: today };
+        if (!missed && finalDmg > 0) {
+          const maxRoll = Math.max(1, Math.round((atk + 2 - Math.floor(enemy.defense / 2)) * effStats.critMultiplier));
+          const enemyDef = ENEMY_TABLE[combat.enemyType] || ENEMY_TABLE.goblin;
+          warriorSlots(nextCharacter).forEach((slot) => {
+            const gained = warriorXpGain({ damage: finalDmg, maximumDamage: maxRoll, challengeRating: enemyDef.challengeRating, playerLevel: nextCharacter.level, slot });
+            const current = nextCharacter.occupations[slot];
+            const xp = current.xp + gained;
+            nextCharacter.occupations = { ...nextCharacter.occupations, [slot]: { ...current, xp, rank: rankForWarriorXp(xp) } };
+            facts.warriorXpGained = (facts.warriorXpGained || 0) + gained;
+          });
+        }
         const weaponDef = nextCharacter.equipped?.weapon ? EQUIPMENT_TABLE[nextCharacter.equipped.weapon.equipmentKey] : null;
         const aspect = aspectForWeapon(weaponDef);
         if (!missed && aspect?.appliesStatus && canUseWeaponAspect(nextCharacter, weaponDef)) {
@@ -2966,7 +3020,8 @@ export default function DMMemoryTest() {
         const openDefense = isPowerStrike ? Math.floor(effStats.def / 2) : effStats.def + incomingDefenseBonus;
         const enemyHitChance = actionType === "defend" ? hitChanceFor(enemyBaseHitChance, 15) : enemyBaseHitChance;
         const { dmg, dodged, missed } = rollIncomingHit(enemy.attack, openDefense, effStats.dodgeChance, enemyHitChance);
-        const finalEnemyDmg = applyTrivializationRule({ attackerStat: enemy.attack || 1, defenderStat: nextCharacter.attributes.con || 1, attackerLevel: combat.severity === "mythic" ? 5 : combat.severity === "legendary" ? 4 : combat.severity === "epic" ? 3 : combat.severity === "rare" ? 2 : 1, defenderLevel: nextCharacter.level, outgoingDamage: dmg });
+        let finalEnemyDmg = applyTrivializationRule({ attackerStat: enemy.attack || 1, defenderStat: nextCharacter.attributes.con || 1, attackerLevel: combat.severity === "mythic" ? 5 : combat.severity === "legendary" ? 4 : combat.severity === "epic" ? 3 : combat.severity === "rare" ? 2 : 1, defenderLevel: nextCharacter.level, outgoingDamage: dmg });
+        if (guardUp) finalEnemyDmg = Math.ceil(finalEnemyDmg / 2);
         nextCharacter.hp = Math.max(0, nextCharacter.hp - finalEnemyDmg);
         facts.enemyDamageDealt = finalEnemyDmg;
         facts.playerDodged = dodged;
@@ -3025,7 +3080,7 @@ export default function DMMemoryTest() {
     setCharacter(nextCharacter);
 
     const combatEnded = facts.enemyDefeated || facts.playerDefeated || facts.fled === true || facts.enemyFled === true;
-    setCombat(combatEnded ? null : { ...combat, enemy, secondWindUsed: combat.secondWindUsed || actionType === "second_wind" });
+    setCombat(combatEnded ? null : { ...combat, enemy, secondWindUsed: combat.secondWindUsed || actionType === "second_wind", openingStrikeUsed: combat.openingStrikeUsed || !!facts.warriorAttack, guardUpUsed: combat.guardUpUsed || actionType === "guard_up", oathStrikeUsed: combat.oathStrikeUsed || actionType === "oath_strike", warriorSecondWindUsed: combat.warriorSecondWindUsed || actionType === "warrior_second_wind", unbroken: combat.unbroken || actionType === "unbroken" });
 
     const rollLines = [];
     if (typeof facts.fleeChance === "number") rollLines.push(rollSegments(`Flee attempt (${facts.fleeChance.toFixed(0)}%): `, facts.fleeChance, facts.fled));
@@ -3066,6 +3121,21 @@ export default function DMMemoryTest() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function chooseWarriorPath(rank, choice) {
+    if (!WARRIOR_PATHS[rank]?.[choice] || character.warriorChoices?.[`rank${rank}`]) return;
+    setCharacter((current) => ({ ...current, warriorChoices: { ...current.warriorChoices, [`rank${rank}`]: choice } }));
+    pushSystemLine(`★ Warrior Rank ${rank}: ${WARRIOR_PATHS[rank][choice].name} chosen permanently.`);
+  }
+
+  function selectOccupation(slot, occupationId) {
+    if (!slotIsUnlocked(character, slot) || character.occupations?.[slot] || !AVAILABLE_OCCUPATIONS.some((entry) => entry.id === occupationId)) return;
+    setCharacter((current) => ({
+      ...current,
+      occupations: { ...current.occupations, [slot]: occupationId === "warrior" ? freshWarrior() : { id: occupationId, rank: 1, xp: 0 } },
+      occupationAbilities: [...new Set([...(current.occupationAbilities || []), ...(occupationId === "warrior" ? ["brace"] : [])])],
+    }));
   }
 
   if (!saveChecked) {
@@ -3114,12 +3184,14 @@ export default function DMMemoryTest() {
     defend: `Defend (avoid dmg: ${hitChanceFor(100, combatEnemyHitChance - 15).toFixed(0)}%)`,
     flee: `Flee (${(characterEffStats.fleeChance * 100).toFixed(0)}%)`,
   };
+  const pendingRankChoice = pendingWarriorChoice(character);
   const shopNpc = shop ? worldState.npcs.find((n) => n.id === shop.npcId) : null;
   const trainingNpc = trainingOffer ? worldState.npcs.find((n) => n.id === trainingOffer.npcId) : null;
 
   return (
     <>
       {FONT_IMPORTS}
+      {pendingRankChoice && <div role="dialog" aria-modal="true" aria-label="Warrior rank-up choice" style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(0,0,0,.82)', display: 'grid', placeItems: 'center', padding: '24px' }}><div style={{ width: 'min(760px,100%)', background: '#17130F', border: `2px solid ${AMBER}`, padding: '24px', color: INK }}><h2 style={{ color: AMBER, fontFamily: DISPLAY_FONT }}>Warrior Rank {pendingRankChoice.rank}: {WARRIOR_TITLES[pendingRankChoice.rank]}</h2><p style={{ color: SLATE }}>Choose one permanent active and passive bundle. This choice cannot be changed.</p><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(250px,1fr))', gap: '14px' }}>{Object.entries(WARRIOR_PATHS[pendingRankChoice.rank]).map(([choice, path]) => <button key={choice} onClick={() => chooseWarriorPath(pendingRankChoice.rank, choice)} style={{ textAlign: 'left', padding: '16px', background: '#241D15', border: `1px solid ${AMBER}`, color: INK, cursor: 'pointer' }}><div style={{ color: AMBER, fontFamily: DISPLAY_FONT, marginBottom: '8px' }}>{choice}) {path.name}</div><div style={{ color: CODE_VOICE, marginBottom: '7px' }}><b>Active:</b> {path.active}</div><div style={{ color: SLATE }}><b>Passive:</b> {path.passive}</div></button>)}</div></div></div>}
       {tutorialOpen && (
         <TutorialPanel
           step={tutorialStep}
@@ -3295,11 +3367,18 @@ export default function DMMemoryTest() {
               <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
                 {combatActionTab === "physical" && [
                   { id: "attack", label: combatActionLabels.attack },
+                  ...availableWeaponMoves(character).map((move) => ({ id: `move:${move}`, label: move })),
                   ...(characterEffStats.hasPowerStrike ? [{ id: "power_strike", label: `Power Strike (${Math.max(15, combatPlayerHitChance - 20).toFixed(0)}%)` }] : []),
+                  ...(character.warriorChoices?.rank3 === "A" && !combat.oathStrikeUsed ? [{ id: "oath_strike", label: "Oath Strike" }] : []),
+                  ...(character.warriorChoices?.rank4 === "A" && character.warriorDailyUses?.warlordCommand !== worldState.day ? [{ id: "warlord_command", label: "Warlord's Command" }] : []),
                 ].map((action) => <button key={action.id} onClick={() => handleCombatAction(action.id)} disabled={actionsDisabled} style={{ background: `linear-gradient(180deg, ${BLOOD} 0%, #4A1620 100%)`, border: `1px solid ${BLOOD}`, color: INK, padding: "9px 18px", fontFamily: DISPLAY_FONT, fontSize: "12.5px", letterSpacing: "0.05em", textTransform: "uppercase", cursor: actionsDisabled ? "default" : "pointer", opacity: actionsDisabled ? 0.5 : 1, borderRadius: "2px" }}>{action.label}</button>)}
                 {combatActionTab === "magic" && <span style={{ color: DIM, fontStyle: "italic" }}>No mana abilities available.</span>}
                 {combatActionTab === "tactics" && [
                   { id: "defend", label: combatActionLabels.defend }, { id: "flee", label: combatActionLabels.flee },
+                  ...((character.occupationAbilities || []).includes("brace") ? [{ id: "brace", label: "Brace" }] : []),
+                  ...(character.warriorChoices?.rank2 === "B" && !combat.guardUpUsed ? [{ id: "guard_up", label: "Guard Up" }] : []),
+                  ...(character.warriorChoices?.rank3 === "B" && !combat.warriorSecondWindUsed ? [{ id: "warrior_second_wind", label: "Second Wind (Warrior)" }] : []),
+                  ...(character.warriorChoices?.rank4 === "B" && character.warriorDailyUses?.unbroken !== worldState.day ? [{ id: "unbroken", label: "Unbroken" }] : []),
                   ...(characterEffStats.hasSecondWind && !combat.secondWindUsed ? [{ id: "second_wind", label: "Second Wind" }] : []),
                 ].map((action) => <button key={action.id} onClick={() => handleCombatAction(action.id)} disabled={actionsDisabled} style={{ background: "linear-gradient(180deg, #241D15 0%, #1A150F 100%)", border: "1px solid #4A3F2C", color: INK, padding: "9px 18px", fontFamily: DISPLAY_FONT, fontSize: "12.5px", letterSpacing: "0.05em", textTransform: "uppercase", cursor: actionsDisabled ? "default" : "pointer", opacity: actionsDisabled ? 0.5 : 1, borderRadius: "2px" }}>{action.label}</button>)}
               </div>
@@ -3440,15 +3519,20 @@ export default function DMMemoryTest() {
           <LedgerSection title="Training"><div style={{ color: INK }}>Banked skill points: <span style={{ color: AMBER }}>{character.bankedSkillPoints || 0}</span></div><div style={{ color: CODE_VOICE, marginTop: "3px" }}>Each session costs {TRAINING_FATIGUE_COST} Fatigue</div></LedgerSection>
         </>}
 
-        {ledgerTab === "skills" && <LedgerSection title={`Abilities (${characterEffStats.abilities.length}/${Object.values(ABILITY_TABLE).flat().length})`}>
+        {ledgerTab === "skills" && <>
+        <LedgerSection title="Occupations">
+          {['primary', 'secondary', 'tertiary'].map((slot) => { const occupation = character.occupations?.[slot]; const unlocked = slotIsUnlocked(character, slot); if (!occupation) return <div key={slot} style={{ opacity: unlocked ? 1 : .45, border: `1px solid ${DIM}`, padding: '10px', marginBottom: '8px' }}><div style={{ color: unlocked ? AMBER : DIM, textTransform: 'capitalize' }}>{slot} — {unlocked ? 'Choose occupation' : 'Locked'}</div>{!unlocked && <div style={{ color: SLATE, fontSize: '10px' }}>{slot === 'secondary' ? 'Unlocks at Primary Rank 3' : 'Unlocks at Primary Rank 4 and Secondary Rank 2'}</div>}{unlocked && AVAILABLE_OCCUPATIONS.map((entry) => <button key={entry.id} onClick={() => selectOccupation(slot, entry.id)} style={{ marginTop: '7px', background: '#211B14', border: `1px solid ${AMBER}`, color: INK }}>{entry.name}</button>)}</div>; const nextThreshold = WARRIOR_THRESHOLDS[Math.min(4, occupation.rank + 1)]; const previous = occupation.rank === 1 ? 0 : WARRIOR_THRESHOLDS[occupation.rank]; return <div key={slot} style={{ border: `1px solid ${AMBER}`, padding: '10px', marginBottom: '8px' }}><div style={{ color: AMBER, textTransform: 'capitalize' }}>{slot}: Warrior — Rank {occupation.rank}: {WARRIOR_TITLES[occupation.rank]}</div>{occupation.rank < 4 ? <><div style={{ color: SLATE, fontSize: '10px', marginTop: '6px' }}>{occupation.xp.toFixed(1)} / {nextThreshold} occupation XP</div><StatBar value={occupation.xp - previous} max={nextThreshold - previous} color={CODE_VOICE} height={5} /></> : <div style={{ color: CODE_VOICE }}>Maximum rank · {occupation.xp.toFixed(1)} XP</div>}{[2,3,4].map((rank) => { const chosen = character.warriorChoices?.[`rank${rank}`]; const path = WARRIOR_PATHS[rank]?.[chosen]; return path ? <div key={rank} style={{ marginTop: '8px', color: INK }}><b>Rank {rank} — {path.name}</b><div style={{ color: CODE_VOICE }}>{path.active}</div><div style={{ color: SLATE }}>{path.passive} ({Math.round(SLOT_SCALING[slot] * 100)}% slot effectiveness)</div></div> : null; })}</div>; })}
+          <div style={{ color: SLATE, fontSize: '10px' }}>Moves: {availableWeaponMoves(character).join(', ')}</div>
+        </LedgerSection>
+        <LedgerSection title={`Abilities (${characterEffStats.abilities.length}/${Object.values(ABILITY_TABLE).flat().length})`}>
           {Object.entries(ABILITY_TABLE).flatMap(([attrKey, abilities]) => abilities.map((ability) => { const unlocked = character.attributes[attrKey] >= ability.min; return <div key={ability.key} style={{ marginBottom: "10px", opacity: unlocked ? 1 : .5 }}><div style={{ color: unlocked ? (ability.mechanical ? CODE_VOICE : AMBER) : DIM }}>{unlocked ? "●" : "○"} {ability.label} <span style={{ color: SLATE, fontSize: "10px" }}>({ATTRIBUTE_DEFS[attrKey].short} {ability.min})</span></div><div style={{ color: SLATE, paddingLeft: "14px", fontSize: "10.5px" }}>{ability.description}</div></div>; }))}
-        </LedgerSection>}
+        </LedgerSection></>}
 
         {ledgerTab === "inventory" && <>
           <div role="tablist" aria-label="Inventory categories" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "5px", marginBottom: "16px" }}>{[["weapons", "Weapons"], ["armor", "Armor"], ["food", "Food"], ["misc", "Miscellaneous"]].map(([tab, label]) => <button key={tab} role="tab" aria-selected={inventoryTab === tab} onClick={() => setInventoryTab(tab)} style={{ padding: "7px 2px", background: inventoryTab === tab ? "#2A2116" : "#100D0A", border: `1px solid ${inventoryTab === tab ? AMBER : DIM}`, color: inventoryTab === tab ? AMBER : SLATE, fontFamily: DISPLAY_FONT, fontSize: "8px", cursor: "pointer" }}>{label}</button>)}</div>
-          <LedgerSection title="Equipped">{["weapon", "armor"].map((slot) => { const item = character.equipped?.[slot]; return <div key={slot} style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px", textTransform: "capitalize", color: item ? INK : DIM }}><span>{slot}: {item?.name || "none"}</span>{item && <button onClick={() => unequipItem(slot)} disabled={loading} style={{ background: "transparent", border: `1px solid ${DIM}`, color: SLATE }}>Unequip</button>}</div>; })}</LedgerSection>
+          <LedgerSection title="Equipped">{["weapon", "armor", "shield"].map((slot) => { const item = character.equipped?.[slot]; return <div key={slot} style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px", textTransform: "capitalize", color: item ? INK : DIM }}><span>{slot}: {item?.name || "none"}</span>{item && <button onClick={() => unequipItem(slot)} disabled={loading} style={{ background: "transparent", border: `1px solid ${DIM}`, color: SLATE }}>Unequip</button>}</div>; })}</LedgerSection>
           <LedgerSection title={`${inventoryTab === "misc" ? "Miscellaneous" : inventoryTab[0].toUpperCase() + inventoryTab.slice(1)}`}>
-            {(() => { const items = character.inventory.filter((item) => { const slot = EQUIPMENT_TABLE[item.equipmentKey]?.slot; const food = !!CONSUMABLE_TABLE[item.consumableKind]?.hungerRestore; return inventoryTab === "weapons" ? slot === "weapon" : inventoryTab === "armor" ? slot === "armor" : inventoryTab === "food" ? food : !slot && !food; }); return items.length ? items.map((item) => <InventoryLedgerItem key={item.id} item={item} loading={loading} onEquip={equipItem} onUse={useConsumable} />) : <div style={{ color: DIM }}>No items in this category.</div>; })()}
+            {(() => { const items = character.inventory.filter((item) => { const slot = EQUIPMENT_TABLE[item.equipmentKey]?.slot; const food = !!CONSUMABLE_TABLE[item.consumableKind]?.hungerRestore; return inventoryTab === "weapons" ? slot === "weapon" : inventoryTab === "armor" ? (slot === "armor" || slot === "shield") : inventoryTab === "food" ? food : !slot && !food; }); return items.length ? items.map((item) => <InventoryLedgerItem key={item.id} item={item} loading={loading} onEquip={equipItem} onUse={useConsumable} />) : <div style={{ color: DIM }}>No items in this category.</div>; })()}
           </LedgerSection>
         </>}
 
