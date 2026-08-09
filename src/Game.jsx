@@ -786,6 +786,25 @@ function hasBackgroundPriceEdge(character) {
   return !!background?.priceEdge;
 }
 
+function hasRegionalPassive(character, key) {
+  return character.regionalPassive?.key === key;
+}
+
+// Regional trade rates deliberately reuse the Merchant background's exact 3% price
+// edge. Unlike that background, each passive is limited to its matching shop archetype.
+function hasRegionalPriceEdge(character, merchantType) {
+  return (hasRegionalPassive(character, "guild_rates") && merchantType === "blacksmith")
+    || (hasRegionalPassive(character, "sailor_trade") && ["general_store", "fence"].includes(merchantType));
+}
+
+function startingTrustForNpc(character, roles = []) {
+  const roleSet = new Set(Array.isArray(roles) ? roles : []);
+  const nobleReception = hasRegionalPassive(character, "noble_reception")
+    && (roleSet.has("noble") || roleSet.has("official"));
+  const sunBorn = hasRegionalPassive(character, "sun_born") && roleSet.has("merchant");
+  return clamp((nobleReception || sunBorn) ? 10 : 0, -10, 10);
+}
+
 // The one place attributes turn into raw combat numbers. Equipment bonuses are layered
 // on top of this in getEffectiveStats — this function never sees gear.
 function baseStatsFromAttributes(attributes) {
@@ -803,7 +822,7 @@ function baseStatsFromAttributes(attributes) {
 // ONLY place attack/defense/maxHp bonuses get applied — combat and UI always call this
 // rather than reading raw fields directly, so a level-up or a re-gear can never silently
 // no-op.
-function getEffectiveStats(character) {
+function getEffectiveStats(character, encounterLocation = null) {
   const effectiveAttributes = { ...character.attributes };
   Object.values(character.timedEffects || {}).forEach((effect) => {
     if (effect.attribute && effect.expiresAt > Date.now()) effectiveAttributes[effect.attribute] += effect.amount;
@@ -830,12 +849,15 @@ function getEffectiveStats(character) {
   const baseAccuracy = clamp(70 + effectiveAttributes.dex * 0.5, 40, 95);
   const strengthShortfall = Math.max(0, (weaponDef?.strRequired || 0) - effectiveAttributes.str);
   const occupation = warriorPassiveBonuses(character);
+  const isWildernessEncounter = encounterLocation?.type === "point_of_interest";
+  const tundraDefense = hasRegionalPassive(character, "cold_resistance") && encounterLocation?.regionId === "tundra" ? 3 : 0;
+  const wildernessDodge = hasRegionalPassive(character, "wilderness_step") && isWildernessEncounter ? 5 : 0;
   return {
     atk: Math.max(0, base.attack + weaponBonus + occupation.atk - (character.hunger <= 0 ? 3 : character.hunger < 30 ? 1 : 0)),
-    def: base.defense + armorBonus + shieldBonus + occupation.def + (has("iron_will") ? 2 : 0),
+    def: base.defense + armorBonus + shieldBonus + occupation.def + (has("iron_will") ? 2 : 0) + tundraDefense,
     maxHp: base.maxHp + occupation.maxHp,
     critChance: Math.max(0, base.critChance + occupation.critChance - (character.fatigue < 30 ? 5 : 0)),
-    dodgeChance: Math.max(0, base.dodgeChance - (character.hunger <= 0 ? 10 : 0) - (character.fatigue < 30 ? 10 : 0)),
+    dodgeChance: Math.max(0, base.dodgeChance + wildernessDodge - (character.hunger <= 0 ? 10 : 0) - (character.fatigue < 30 ? 10 : 0)),
     accuracy: Math.max(15, baseAccuracy - strengthShortfall * 5),
     critMultiplier: has("assassination") ? 2 : 1.5,
     fleeChance: has("shadow_step") ? 0.85 : 0.6,
@@ -1197,7 +1219,7 @@ Respond with ONLY valid JSON, no markdown fences, no preamble:
   "narration": "string",
   "stateUpdates": {
     "location": null,
-    "newNPCs": [{"name": "string", "memory": "short fact", "traits": "array of 1-3 strings from the fixed trait list below, optional", "goal": "short string, what this NPC wants, optional", "secret": "short string, something hidden about them, optional", "isTrainer": "boolean, optional", "trainerSubtype": "standard|deepsinger, optional", "trainableStats": "optional array of {stat: STR|DEX|CON|INT|WIS|CHA|ARC, maxLevel: integer}; maxLevel must equal this NPC's own ability", "trustRequired": "integer, optional; minimum trust for instruction"}],
+    "newNPCs": [{"name": "string", "memory": "short fact", "roles": "optional array using only noble|official|merchant; include every role clearly established by the fiction", "traits": "array of 1-3 strings from the fixed trait list below, optional", "goal": "short string, what this NPC wants, optional", "secret": "short string, something hidden about them, optional", "isTrainer": "boolean, optional", "trainerSubtype": "standard|deepsinger, optional", "trainableStats": "optional array of {stat: STR|DEX|CON|INT|WIS|CHA|ARC, maxLevel: integer}; maxLevel must equal this NPC's own ability", "trustRequired": "integer, optional; minimum trust for instruction"}],
     "npcUpdates": [{"id": "string — exact existing npc id from WORLD STATE", "name": "string, optional — only when this NPC's real name is genuinely revealed in the fiction for the first time", "memory": "updated fact, optional", "traits": "array of 1-3 strings from the fixed trait list, optional — only include if it should change", "goal": "short string, optional — only include if it changes", "secret": "short string, optional — only include if newly revealed or changed", "isTrainer": "boolean, optional", "trainerSubtype": "standard|deepsinger, optional", "trainableStats": "optional array of {stat: STR|DEX|CON|INT|WIS|CHA|ARC, maxLevel: integer}", "trustRequired": "integer, optional"}],
     "reputationDelta": "string or null",
     "worldFacts": ["short new persistent facts, if any"]
@@ -1244,6 +1266,8 @@ Every item you loot is automatically assigned a rarity by code (Common through M
 For npc_relationship: use this liberally for small, easy-to-miss moments, not just dramatic ones — a passing kindness or a minor slight is exactly as valid as betrayal or heroics. Never invent an interaction label outside the fixed list above; if nothing fits, omit the event.
 
 For "traits", "goal", and "secret" on newNPCs/npcUpdates: these are optional and meant for NPCs who actually matter to the current scene or an active thread — not every passing name needs a full profile. "traits" must be 1-3 entries from this exact fixed list: Honest, Greedy, Cowardly, Brave, Loyal, Curious, Stubborn, Suspicious, Kind, Ambitious, Superstitious, Vengeful — never invent a trait outside this list. "goal" and "secret" are free text, kept to a single short sentence. A "secret" being stored here does NOT mean the player knows it — it's private narrative memory for you to reference consistently and reveal in-fiction only if and when the story actually earns that reveal; never have an NPC blurt out their own secret unprompted just because it exists in this field. Only include a field in npcUpdates when it's actually changing — omit memory/traits/goal/secret entirely rather than repeating unchanged values.
+
+For newNPC "roles", tag only an NPC whose role is clear in the fiction: noble for titled nobility, official for a government/civic authority, and merchant for someone introduced as a trader or shopkeeper. These tags initialize that individual NPC's code-owned trust and do not replace traits.
 
 Include "name" in an npcUpdates entry whenever an NPC previously introduced under a placeholder or descriptive label (e.g. "The map-folder," "Two laborers by the fire") reveals their real name, or a name they go by, for the first time in the story. Once renamed, always refer to them by that real name in narration going forward — never fall back to the old placeholder label again. If a group label covers multiple people and only one of them gives a name, use your judgment: either rename the whole entry to that person's name if they become the one the player is actually dealing with, or leave the group entry as-is and introduce the named person as a separate new NPC if they're meaningfully distinct from the group.
 
@@ -2434,7 +2458,7 @@ export default function DMMemoryTest() {
     if (!npc || !npc.merchant) return;
     const stockEntry = npc.merchant.stock.find((s) => s.key === key);
     if (!stockEntry || stockEntry.remaining <= 0) return;
-    const price = buyPriceFor(shop.merchantType, key, npc.trust || 0, character.attributes.cha, hasAbility(character, "silver_tongue"), hasBackgroundPriceEdge(character));
+    const price = buyPriceFor(shop.merchantType, key, npc.trust || 0, character.attributes.cha, hasAbility(character, "silver_tongue"), hasBackgroundPriceEdge(character) || hasRegionalPriceEdge(character, shop.merchantType));
     if (character.gold < price) return;
 
     setCharacter((c) => ({ ...c, gold: c.gold - price }));
@@ -2459,7 +2483,7 @@ export default function DMMemoryTest() {
     const idx = character.inventory.findIndex((i) => i.id === itemId);
     if (idx === -1) return;
     const item = character.inventory[idx];
-    const price = sellPriceFor(shop.merchantType, item, npc.trust || 0, character.attributes.cha, hasAbility(character, "silver_tongue"), hasBackgroundPriceEdge(character));
+    const price = sellPriceFor(shop.merchantType, item, npc.trust || 0, character.attributes.cha, hasAbility(character, "silver_tongue"), hasBackgroundPriceEdge(character) || hasRegionalPriceEdge(character, shop.merchantType));
     if (npc.merchant.gold < price) return; // merchant can't afford it right now
 
     const nextInventory = [...character.inventory];
@@ -2647,6 +2671,10 @@ export default function DMMemoryTest() {
             }
             return {
               ...n,
+              roles: [...new Set([...(n.roles || []), "merchant"])],
+              trust: hasRegionalPassive(character, "sun_born") && !(n.roles || []).includes("merchant")
+                ? clamp((n.trust || 0) + 10, -10, 10)
+                : (n.trust || 0),
               merchant: {
                 merchantType: event.merchantType,
                 gold: merchantDef.startingGold,
@@ -2829,6 +2857,7 @@ export default function DMMemoryTest() {
 
         (stateUpdates.newNPCs || []).forEach((npc) => {
           const validTraits = Array.isArray(npc.traits) ? npc.traits.filter((t) => NPC_TRAITS.includes(t)) : [];
+          const validRoles = Array.isArray(npc.roles) ? npc.roles.filter((role) => ["noble", "official", "merchant"].includes(role)) : [];
           const existingByName = next.npcs.findIndex((n) => n.name === npc.name);
           if (existingByName >= 0) {
             const trainerStats = validTrainableStats(npc.trainableStats);
@@ -2849,10 +2878,11 @@ export default function DMMemoryTest() {
               id: newId,
               name: npc.name,
               memory: npc.memory,
-              trust: 0,
+              trust: startingTrustForNpc(character, validRoles),
               respect: 0,
               fear: 0,
               traits: validTraits,
+              roles: validRoles,
               goal: npc.goal || null,
               secret: npc.secret || null,
               personalFear: null,
@@ -2916,7 +2946,7 @@ export default function DMMemoryTest() {
     const facts = { action: actionType };
     // Always fight with gear-adjusted stats, never the raw base numbers — this is the
     // only place attack/defense bonuses from equipped items take effect.
-    const effStats = getEffectiveStats(nextCharacter);
+    const effStats = getEffectiveStats(nextCharacter, worldState.locations[worldState.locationId]);
     const playerHitChance = hitChanceFor(effStats.accuracy, 0);
     const enemyBaseHitChance = clamp(hitChanceFor(70, effStats.dodgeChance * 1.2), 10, 90);
     const warriorSlot = warriorSlots(nextCharacter)[0];
@@ -3070,7 +3100,8 @@ export default function DMMemoryTest() {
           const areas = Object.keys(INJURY_TABLE);
           const area = areas[Math.floor(Math.random() * areas.length)];
           const injury = INJURY_TABLE[area];
-          nextCharacter.injuries = [...(nextCharacter.injuries || []), { area, statKey: injury.statKey, amount: injury.amount, cured: false }];
+          const injuryAmount = hasRegionalPassive(nextCharacter, "hardened_constitution") ? Math.trunc(injury.amount / 2) : injury.amount;
+          nextCharacter.injuries = [...(nextCharacter.injuries || []), { area, statKey: injury.statKey, amount: injuryAmount, cured: false }];
           nextCharacter.scars = [...(nextCharacter.scars || []), { area, description: injury.description }];
           facts.injuryArea = area;
         }
@@ -3176,7 +3207,7 @@ export default function DMMemoryTest() {
     );
   }
 
-  const characterEffStats = getEffectiveStats(character);
+  const characterEffStats = getEffectiveStats(character, combat ? worldState.locations[worldState.locationId] : null);
   const combatPlayerHitChance = hitChanceFor(characterEffStats.accuracy, 0);
   const combatEnemyHitChance = clamp(hitChanceFor(70, characterEffStats.dodgeChance * 1.2), 10, 90);
   const combatActionLabels = {
@@ -4212,6 +4243,7 @@ function ShopPanel({ shopNpc, merchantType, character, onBuy, onSell, onClose, l
   const priceMod = trustPriceModifier(trust);
   const silverTongue = hasAbility(character, "silver_tongue");
   const merchantBackground = hasBackgroundPriceEdge(character);
+  const regionalPriceEdge = hasRegionalPriceEdge(character, merchantType);
   const sellableItems = character.inventory.filter((item) => item.equipmentKey || item.consumableKind);
 
   return (
@@ -4231,6 +4263,7 @@ function ShopPanel({ shopNpc, merchantType, character, onBuy, onSell, onClose, l
         )}
         {silverTongue && <span style={{ color: AMBER }}> · Silver Tongue active</span>}
         {merchantBackground && <span style={{ color: AMBER }}> · Merchant's instinct active</span>}
+        {regionalPriceEdge && <span style={{ color: AMBER }}> · Regional rates active</span>}
       </div>
 
       <div style={{ display: "flex", gap: "18px", flexWrap: "wrap" }}>
@@ -4241,7 +4274,7 @@ function ShopPanel({ shopNpc, merchantType, character, onBuy, onSell, onClose, l
           ) : (
             merchant.stock.map((s) => {
               if (s.remaining <= 0) return null;
-              const price = buyPriceFor(merchantType, s.key, trust, character.attributes.cha, silverTongue, merchantBackground);
+              const price = buyPriceFor(merchantType, s.key, trust, character.attributes.cha, silverTongue, merchantBackground || regionalPriceEdge);
               const canAfford = character.gold >= price;
               return (
                 <div key={s.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
@@ -4267,7 +4300,7 @@ function ShopPanel({ shopNpc, merchantType, character, onBuy, onSell, onClose, l
             <div style={{ color: DIM, fontSize: "12px" }}>Nothing tradeable on you.</div>
           ) : (
             sellableItems.map((item) => {
-              const price = sellPriceFor(merchantType, item, trust, character.attributes.cha, silverTongue, merchantBackground);
+              const price = sellPriceFor(merchantType, item, trust, character.attributes.cha, silverTongue, merchantBackground || regionalPriceEdge);
               const canSell = merchant.gold >= price;
               return (
                 <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
