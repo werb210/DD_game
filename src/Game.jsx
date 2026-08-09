@@ -45,8 +45,15 @@ import { AVAILABLE_OCCUPATIONS, SLOT_SCALING, WARRIOR_PATHS, WARRIOR_THRESHOLDS,
 
 const INK = "#E4D9BE";
 const AMBER = "#C89B4A";
-const TYPEWRITER_DELAY_MS = 45;
+const TYPEWRITER_DELAY_MS = 35;
 const ROLL_FLICKERS = 13;
+const DEFAULT_TEXT_SPEED = 1;
+const TEXT_SPEED_OPTIONS = [0.5, 0.75, 1, 1.5, 2, 2.5];
+
+function normalizeTextSpeed(value) {
+  const speed = Number(value);
+  return TEXT_SPEED_OPTIONS.includes(speed) ? speed : DEFAULT_TEXT_SPEED;
+}
 
 const textSegments = (value) => [{ type: "text", value: String(value) }];
 const rollSegments = (before, chance, outcome, after = "") => [
@@ -60,10 +67,12 @@ function entrySegments(entry) {
   return textSegments(entry.role === "dm" ? entry.narration || "" : entry.text || "");
 }
 
-function useSequentialFeedReveal(log) {
+function useSequentialFeedReveal(log, textSpeed) {
   const [visible, setVisible] = useState([]);
   const [cursor, setCursor] = useState(0);
   const [revealing, setRevealing] = useState(log.length > 0);
+  const textSpeedRef = useRef(textSpeed);
+  textSpeedRef.current = textSpeed;
 
   useEffect(() => {
     if (cursor >= log.length) {
@@ -94,15 +103,15 @@ function useSequentialFeedReveal(log) {
           for (let flip = 0; flip < ROLL_FLICKERS && !cancelled; flip += 1) {
             const success = Math.random() >= 0.5;
             updateSegment(segmentIndex, { type: "roll", value: success ? "success" : "failure", outcome: success, chance: segment.chance });
-            await wait(35 + flip * 12);
+            await wait((35 + flip * 12) / textSpeedRef.current);
           }
           updateSegment(segmentIndex, { type: "roll", value: segment.outcome ? "success" : "failure", outcome: segment.outcome, chance: segment.chance });
-          await wait(400);
+          await wait(400 / textSpeedRef.current);
         } else {
           const value = String(segment.value || "");
           for (let length = 1; length <= value.length && !cancelled; length += 1) {
             updateSegment(segmentIndex, { type: "text", value: value.slice(0, length) });
-            await wait(TYPEWRITER_DELAY_MS);
+            await wait(TYPEWRITER_DELAY_MS / textSpeedRef.current);
           }
         }
       }
@@ -1854,6 +1863,7 @@ export default function DMMemoryTest() {
   const [journalOpen, setJournalOpen] = useState(false);
   const [mapOpen, setMapOpen] = useState(false);
   const [pauseOpen, setPauseOpen] = useState(false);
+  const [textSpeed, setTextSpeed] = useState(DEFAULT_TEXT_SPEED);
   const [manualSaveExists, setManualSaveExists] = useState(false);
   const [manualSaveAt, setManualSaveAt] = useState(null);
   const [manualSaveStatus, setManualSaveStatus] = useState(null); // transient message, e.g. "Saved!" / "Loaded!"
@@ -1862,7 +1872,7 @@ export default function DMMemoryTest() {
   const [combatActionTab, setCombatActionTab] = useState("physical");
   const scrollRef = useRef(null);
   const previousCombatRef = useRef(false);
-  const { visible: revealedLog, revealing: feedRevealing } = useSequentialFeedReveal(log);
+  const { visible: revealedLog, revealing: feedRevealing } = useSequentialFeedReveal(log, textSpeed);
   const actionsDisabled = loading || feedRevealing;
 
   useEffect(() => {
@@ -1908,6 +1918,7 @@ export default function DMMemoryTest() {
   // effect and the manual Load button, so both go through the exact same migration
   // logic rather than two versions drifting apart over time.
   function applySavedGame(saved) {
+    setTextSpeed(normalizeTextSpeed(saved.settings?.textSpeed));
     if (saved.worldState) {
       // Migration: saves from before the map/travel-graph system stored each
       // location as a plain display-name string instead of {name, connections}.
@@ -2024,6 +2035,7 @@ export default function DMMemoryTest() {
       nextNpcId: nextNpcIdRef.current,
       nextLocationId: nextLocationIdRef.current,
       nextItemId: nextItemIdRef.current,
+      settings: { textSpeed },
     });
   }
 
@@ -2099,7 +2111,7 @@ export default function DMMemoryTest() {
         // Best-effort — a failed save write shouldn't interrupt gameplay.
       }
     })();
-  }, [worldState, character, quests, log, combat, saveChecked, needsIdentity]);
+  }, [worldState, character, quests, log, combat, textSpeed, saveChecked, needsIdentity]);
 
   // Check once on mount whether a manual save already exists, so the Load button knows
   // whether to enable itself and can show when that save was actually made.
@@ -2167,6 +2179,7 @@ export default function DMMemoryTest() {
     }
     setWorldState(initialWorldState);
     setCharacter(initialCharacter);
+    setTextSpeed(DEFAULT_TEXT_SPEED);
     setQuests([]);
     setInteractionType("standard");
     setCombat(null);
@@ -3255,6 +3268,8 @@ export default function DMMemoryTest() {
           manualSaveExists={manualSaveExists}
           manualSaveAt={manualSaveAt}
           manualSaveStatus={manualSaveStatus}
+          textSpeed={textSpeed}
+          onTextSpeedChange={setTextSpeed}
         />
       )}
       <div style={{ display: "flex", height: "100vh", width: "100%", background: "radial-gradient(ellipse at 30% 0%, #211B15 0%, #14110D 65%)", color: INK, fontFamily: BODY_FONT }}>
@@ -3842,11 +3857,9 @@ function TutorialPanel({ step, onNext, onBack, onClose }) {
 // worldState.worldFacts, attribute milestones); this is a compiled view, not a new
 // system. Full-screen overlay like the tutorial — reference material, not a decision
 // the game is waiting on, so it doesn't lock input.
-// The pause menu — the one place that's honest about what's built and what isn't. Save
-// slots and Settings are placeholders on purpose: rather than dead buttons that do
-// nothing, each explains what actually happens today (autosave) so nobody's left
-// wondering if they clicked something broken.
-function PausePanel({ onResume, onOpenTutorial, confirmingNewGame, onRequestNewGame, onConfirmNewGame, onCancelNewGame, onManualSave, onManualLoad, manualSaveExists, manualSaveAt, manualSaveStatus }) {
+// The pause menu keeps checkpoint tools and presentation settings together so they
+// remain available without adding controls to the play surface.
+function PausePanel({ onResume, onOpenTutorial, confirmingNewGame, onRequestNewGame, onConfirmNewGame, onCancelNewGame, onManualSave, onManualLoad, manualSaveExists, manualSaveAt, manualSaveStatus, textSpeed, onTextSpeedChange }) {
   function menuButton(label, onClick, color = INK, borderColor = "#4A3F2C", disabled = false) {
     return (
       <button
@@ -3897,8 +3910,20 @@ function PausePanel({ onResume, onOpenTutorial, confirmingNewGame, onRequestNewG
             : "No manual checkpoint yet — Save creates one; Load will return to it later, separate from autosave."}
         </p>
 
-        <div style={{ opacity: 0.5, pointerEvents: "none" }}>{menuButton("Settings")}</div>
-        <p style={{ color: DIM, fontSize: "10.5px", marginTop: "-4px", lineHeight: 1.5 }}>Coming eventually — just a placeholder for now.</p>
+        <div style={{ borderTop: "1px solid #3A3024", paddingTop: "14px" }}>
+          <label htmlFor="text-speed" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px", color: INK, fontFamily: DISPLAY_FONT, fontSize: "12px", letterSpacing: "0.04em", marginBottom: "7px" }}>
+            <span>Text speed</span>
+            <select
+              id="text-speed"
+              value={textSpeed}
+              onChange={(event) => onTextSpeedChange(normalizeTextSpeed(event.target.value))}
+              style={{ background: "#17120E", border: `1px solid ${AMBER}`, borderRadius: "2px", color: AMBER, padding: "7px 10px", fontFamily: "ui-monospace, monospace", cursor: "pointer" }}
+            >
+              {TEXT_SPEED_OPTIONS.map((speed) => <option key={speed} value={speed}>{speed.toFixed(2)}x</option>)}
+            </select>
+          </label>
+          <p style={{ color: DIM, fontSize: "10.5px", margin: 0, lineHeight: 1.5 }}>Controls narrative text and roll reveal animations.</p>
+        </div>
       </div>
     </div>
   );
