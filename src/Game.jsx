@@ -1700,7 +1700,6 @@ function characterSummaryForPrompt(character, quests) {
 
 export default function DMMemoryTest() {
   const [worldState, setWorldState] = useState(initialWorldState);
-  const [ledgerTab, setLedgerTab] = useState("character");
   const [character, setCharacter] = useState(initialCharacter);
   const [quests, setQuests] = useState([]);
   const [interactionType, setInteractionType] = useState("standard");
@@ -1734,6 +1733,7 @@ export default function DMMemoryTest() {
   const [debugLog, setDebugLog] = useState([]);
   const [debugOpen, setDebugOpen] = useState(false);
   const [tutorialOpen, setTutorialOpen] = useState(false);
+  const [ledgerTab, setLedgerTab] = useState("character");
   const [needsIdentity, setNeedsIdentity] = useState(false);
   const [journalOpen, setJournalOpen] = useState(false);
   const [mapOpen, setMapOpen] = useState(false);
