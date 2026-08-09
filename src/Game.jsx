@@ -35,6 +35,7 @@ import { WORLD_LORE } from './WORLD_LORE.js';
 import { STATUS_EFFECT_TABLE } from './data/statusEffectData.js';
 import { WEAPON_ASPECT_TABLE } from './data/weaponAspectData.js';
 import { RUNE_TABLE } from './data/runeData.js';
+import { FACTION_IDS, adjustFactionReputation, getFactionTier, seedFactionReputation } from './data/factionReputation.js';
 
 // ---- Design tokens ----
 // Grimdark medieval reskin: cold iron, old blood, tarnished gold leaf on parchment ink.
@@ -934,6 +935,7 @@ const initialCharacter = {
   scars: [],
   isDead: false,
   death: null,
+  factionReputation: seedFactionReputation("heartlands"),
 };
 
 const LORE_REGION_KEY = {
@@ -1808,6 +1810,7 @@ export default function DMMemoryTest() {
   const [diagnosing4, setDiagnosing4] = useState(false);
   const [debugLog, setDebugLog] = useState([]);
   const [debugOpen, setDebugOpen] = useState(false);
+  const [debugFactionId, setDebugFactionId] = useState(FACTION_IDS[0]);
   const [tutorialOpen, setTutorialOpen] = useState(false);
   const [ledgerTab, setLedgerTab] = useState("character");
   const [inventoryTab, setInventoryTab] = useState("weapons");
@@ -1939,6 +1942,10 @@ export default function DMMemoryTest() {
         forcedRest: saved.character.forcedRest || false,
         startingRegion: inferredStartingRegion,
         regionalPassive: saved.character.regionalPassive || { ...REGIONS_TABLE[inferredStartingRegion].passiveAbility },
+        factionReputation: {
+          ...seedFactionReputation(inferredStartingRegion),
+          ...(saved.character.factionReputation || {}),
+        },
         ...restOfSavedCharacter,
         attributes: migratedAttributes,
         inventory: migratedInventory,
@@ -2176,7 +2183,7 @@ export default function DMMemoryTest() {
       });
       const startingGold = 10 + (background.startingGold || 0);
       const startingInventory = buildStartingInventory(identityDetails.weapon, identityDetails.background);
-      const openingCharacter = { ...initialCharacter, attributes: startingAttributes, gold: startingGold, inventory: startingInventory, identity: identityWithRegion, traits, formativeAnswers, startingRegion, regionalPassive };
+      const openingCharacter = { ...initialCharacter, attributes: startingAttributes, gold: startingGold, inventory: startingInventory, identity: identityWithRegion, traits, formativeAnswers, startingRegion, regionalPassive, factionReputation: seedFactionReputation(startingRegion, identityDetails.homeFactionId) };
       const startingLocationId = REGIONS_TABLE[startingRegion].hubSettlement;
       const openingWorldState = { ...initialWorldState, day: 1, locationId: startingLocationId, locations: cloneWorldMap(startingLocationId) };
       setCharacter(openingCharacter);
@@ -3187,6 +3194,15 @@ export default function DMMemoryTest() {
 
         {debugOpen && (
           <div style={{ maxHeight: "40vh", overflowY: "auto", borderBottom: `1px solid ${CODE_VOICE}`, background: "#12100D", padding: "14px 20px", fontFamily: "ui-monospace, monospace", fontSize: "11.5px" }}>
+            <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "8px", paddingBottom: "12px", marginBottom: "12px", borderBottom: "1px solid #2A2620" }}>
+              <span style={{ color: CODE_VOICE }}>Faction reputation</span>
+              <select aria-label="Faction reputation" value={debugFactionId} onChange={(event) => setDebugFactionId(event.target.value)} style={{ background: "#1A1611", color: INK, border: `1px solid ${DIM}`, padding: "5px" }}>
+                {WORLD_LORE.flatMap((region) => region.factions).map((faction) => <option key={faction.id} value={faction.id}>{faction.name}</option>)}
+              </select>
+              <button onClick={() => setCharacter((current) => ({ ...current, factionReputation: adjustFactionReputation(debugFactionId, -10, current.factionReputation) }))} style={{ background: "transparent", color: WOUND, border: `1px solid ${WOUND}` }}>−10</button>
+              <button onClick={() => setCharacter((current) => ({ ...current, factionReputation: adjustFactionReputation(debugFactionId, 10, current.factionReputation) }))} style={{ background: "transparent", color: CODE_VOICE, border: `1px solid ${CODE_VOICE}` }}>+10</button>
+              <span style={{ color: SLATE }}>{character.factionReputation?.[debugFactionId] ?? 0} ({getFactionTier(character.factionReputation?.[debugFactionId])})</span>
+            </div>
             {debugLog.length === 0 ? (
               <div style={{ color: DIM }}>No turns logged yet — take an action to populate this.</div>
             ) : (
@@ -3446,7 +3462,7 @@ export default function DMMemoryTest() {
           <div style={{ marginTop: "12px", color: SLATE }}><div>Catnap <span style={{ color: DIM }}>(camp system pending)</span></div>{worldState.locations[worldState.locationId]?.type !== "settlement" && <div style={{ marginTop: "7px" }}>Make Camp <span style={{ color: DIM }}>(camp system pending)</span></div>}</div>
         </LedgerSection>}
 
-        {ledgerTab === "encyclopedia" && <WorldCompendium worldState={worldState} />}
+        {ledgerTab === "encyclopedia" && <WorldCompendium worldState={worldState} factionReputation={character.factionReputation} />}
       </div>
       </div>
     </>
@@ -4257,11 +4273,11 @@ function StatBar({ value, max, color, height = 8 }) {
   );
 }
 
-function CollapsibleLoreRow({ title, summary, description }) {
+function CollapsibleLoreRow({ title, summary, description, badge }) {
   const [expanded, setExpanded] = useState(false);
   return (
     <div style={{ borderBottom: "1px solid #33291D" }}>
-      <button aria-expanded={expanded} onClick={() => setExpanded((value) => !value)} style={{ width: "100%", padding: "8px 2px", border: 0, background: "transparent", color: INK, display: "flex", justifyContent: "space-between", textAlign: "left", cursor: "pointer", fontFamily: BODY_FONT, fontSize: "14px" }}><span>{title}{summary && <span style={{ color: SLATE, fontSize: "12px" }}> — {summary}</span>}</span><span style={{ color: AMBER }}>{expanded ? "−" : "+"}</span></button>
+      <button aria-expanded={expanded} onClick={() => setExpanded((value) => !value)} style={{ width: "100%", padding: "8px 2px", border: 0, background: "transparent", color: INK, display: "flex", justifyContent: "space-between", textAlign: "left", cursor: "pointer", fontFamily: BODY_FONT, fontSize: "14px" }}><span>{title}{badge}{summary && <span style={{ color: SLATE, fontSize: "12px" }}> — {summary}</span>}</span><span style={{ color: AMBER }}>{expanded ? "−" : "+"}</span></button>
       {expanded && description && <div style={{ color: SLATE, fontFamily: BODY_FONT, fontSize: "13px", lineHeight: 1.5, padding: "0 8px 9px" }}>{description}</div>}
     </div>
   );
@@ -4276,7 +4292,14 @@ function InventoryLedgerItem({ item, loading, onEquip, onUse }) {
   return <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px", marginBottom: "8px" }}><div style={{ display: "flex", alignItems: "center", gap: "6px" }}>{sprite && <PixelSprite src={sprite} alt="" size={28} />}<span style={{ color: rarity.color }}>{item.name}{item.quantity > 1 ? ` ×${item.quantity}` : ""}</span></div>{equipment ? <button onClick={() => onEquip(item.id)} disabled={loading} style={{ background: "transparent", border: `1px solid ${CODE_VOICE}`, color: CODE_VOICE }}>Equip</button> : consumable ? <button onClick={() => onUse(item.id)} disabled={loading} style={{ background: "transparent", border: `1px solid ${CODE_VOICE}`, color: CODE_VOICE }}>{isFood ? "Eat" : "Use"}</button> : null}</div>;
 }
 
-function WorldCompendium({ worldState }) {
+const FACTION_TIER_COLORS = { Hostile: "#7E1F24", Distrusted: "#B45F3C", Neutral: "#77808C", Favored: "#8FBC7A", Trusted: "#3F8F58", Exalted: "#D6AC45" };
+
+function FactionTierBadge({ value }) {
+  const tier = getFactionTier(value);
+  return <span style={{ display: "inline-block", marginLeft: "7px", padding: "1px 5px", border: `1px solid ${FACTION_TIER_COLORS[tier]}`, color: FACTION_TIER_COLORS[tier], borderRadius: "8px", fontFamily: "ui-monospace, monospace", fontSize: "9px", verticalAlign: "middle" }}>{tier}</span>;
+}
+
+function WorldCompendium({ worldState, factionReputation = {} }) {
   const [expandedRegion, setExpandedRegion] = useState(null);
   const discoveredCounts = Object.values(worldState.locations).reduce((counts, location) => {
     if (location.discovered && location.regionId) counts[location.regionId] = (counts[location.regionId] || 0) + 1;
@@ -4301,7 +4324,7 @@ function WorldCompendium({ worldState }) {
         {expanded && <div style={{ borderTop: `1px solid ${DIM}`, padding: "12px" }}>
           <div style={{ color: INK, fontFamily: BODY_FONT }}>{region.dominantRace} · {region.racePercent}</div>
           <div style={{ marginTop: "12px", color: AMBER, fontFamily: DISPLAY_FONT, fontSize: "10px", textTransform: "uppercase" }}>Political Structure</div><div style={{ color: SLATE, fontFamily: BODY_FONT }}>{region.politicalStructure}</div>
-          <div style={{ marginTop: "15px" }}><div style={{ color: AMBER, fontFamily: DISPLAY_FONT, fontSize: "10px", textTransform: "uppercase", borderBottom: `1px solid ${DIM}` }}>Factions</div>{region.factions.map((group) => <CollapsibleLoreRow key={group.name} title={group.name} summary={[group.leaderTitle, group.leaderName].filter(Boolean).join(" ")} description={count >= 3 ? [group.trait, group.description].filter(Boolean).join(" ") : null} />)}{region.wildcard && <CollapsibleLoreRow title={region.wildcard.name} summary="Wildcard" description={count >= 3 ? region.wildcard.trait : null} />}</div>
+          <div style={{ marginTop: "15px" }}><div style={{ color: AMBER, fontFamily: DISPLAY_FONT, fontSize: "10px", textTransform: "uppercase", borderBottom: `1px solid ${DIM}` }}>Factions</div>{region.factions.map((group) => <CollapsibleLoreRow key={group.name} title={group.name} badge={count >= 3 ? <FactionTierBadge value={factionReputation[group.id]} /> : null} summary={[group.leaderTitle, group.leaderName].filter(Boolean).join(" ")} description={count >= 3 ? [group.trait, group.description].filter(Boolean).join(" ") : null} />)}{region.wildcard && <CollapsibleLoreRow title={region.wildcard.name} summary="Wildcard" description={count >= 3 ? region.wildcard.trait : null} />}</div>
           {section("Customs", region.customs, count >= 3)}
           {section("History", region.history, count >= 5)}
           {section(region.pantheon ? "Pantheon" : "Belief System", region.pantheon || region.beliefSystem, fullyDiscovered, !!region.pantheon)}
