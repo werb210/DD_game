@@ -1810,6 +1810,7 @@ export default function DMMemoryTest() {
   const [debugOpen, setDebugOpen] = useState(false);
   const [tutorialOpen, setTutorialOpen] = useState(false);
   const [ledgerTab, setLedgerTab] = useState("character");
+  const [inventoryTab, setInventoryTab] = useState("weapons");
   const [needsIdentity, setNeedsIdentity] = useState(false);
   const [journalOpen, setJournalOpen] = useState(false);
   const [mapOpen, setMapOpen] = useState(false);
@@ -3393,322 +3394,59 @@ export default function DMMemoryTest() {
           <RavenGlyph size={14} /> Character Ledger <span style={{ color: DIM, textTransform: "none", letterSpacing: 0, fontFamily: "ui-monospace, monospace", fontSize: "10px" }}>(code-owned)</span>
         </div>
 
-        <div role="tablist" aria-label="Character Ledger sections" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px", marginBottom: "20px" }}>
-          {[['character', 'Character'], ['world', 'World']].map(([tab, label]) => (
-            <button key={tab} role="tab" aria-selected={ledgerTab === tab} onClick={() => setLedgerTab(tab)} style={{ padding: "8px", cursor: "pointer", fontFamily: DISPLAY_FONT, letterSpacing: ".08em", textTransform: "uppercase", fontSize: "10.5px", color: ledgerTab === tab ? AMBER : SLATE, background: ledgerTab === tab ? "linear-gradient(180deg, #2A2116, #17130F)" : "#100D0A", border: `1px solid ${ledgerTab === tab ? AMBER : DIM}`, boxShadow: ledgerTab === tab ? "inset 0 0 0 1px #33291D" : "none" }}>
+        <div role="tablist" aria-label="Character Ledger sections" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "6px", marginBottom: "20px" }}>
+          {[["character", "Character"], ["skills", "Skill Tree"], ["inventory", "Inventory"], ["magic", "Magic"], ["camp", "Camp"], ["encyclopedia", "Encyclopedia"]].map(([tab, label]) => (
+            <button key={tab} role="tab" aria-selected={ledgerTab === tab} onClick={() => setLedgerTab(tab)} style={{ padding: "8px 4px", cursor: "pointer", fontFamily: DISPLAY_FONT, letterSpacing: ".05em", textTransform: "uppercase", fontSize: "9px", color: ledgerTab === tab ? AMBER : SLATE, background: ledgerTab === tab ? "linear-gradient(180deg, #2A2116, #17130F)" : "#100D0A", border: `1px solid ${ledgerTab === tab ? AMBER : DIM}`, boxShadow: ledgerTab === tab ? "inset 0 0 0 1px #33291D" : "none" }}>
               {label}
             </button>
           ))}
         </div>
 
-        {ledgerTab === "character" ? <>
-
-        {character.identity && (
-          <LedgerSection title="Identity">
+        {ledgerTab === "character" && <>
+          {character.identity && <LedgerSection title="Identity">
             <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
               <PixelSprite src={RACE_SPRITES[character.identity.race] || RACE_SPRITES.human} alt={`${character.identity.race} character sprite`} size={64} style={{ background: "#0e0c09", border: "1px solid #33291D" }} />
-              <div>
-                <div style={{ color: AMBER, fontFamily: DISPLAY_FONT, fontSize: "13px" }}>{character.identity.name}</div>
-                <div style={{ color: SLATE, fontSize: "11px", marginTop: "2px" }}>
-                  {RACE_OPTIONS.find((r) => r.key === character.identity.race)?.label || character.identity.race} · {BACKGROUND_OPTIONS[character.identity.background]?.label || character.identity.background}
-                  {character.identity.gender ? ` · ${character.identity.gender}` : ""}
-                  {character.identity.age ? ` · Age ${character.identity.age}` : ""}
-                </div>
-              </div>
+              <div><div style={{ color: AMBER, fontFamily: DISPLAY_FONT, fontSize: "13px" }}>{character.identity.name}</div><div style={{ color: SLATE, fontSize: "11px" }}>{RACE_OPTIONS.find((r) => r.key === character.identity.race)?.label || character.identity.race} · {BACKGROUND_OPTIONS[character.identity.background]?.label || character.identity.background}</div></div>
             </div>
-            {character.identity.voice && <div style={{ color: SLATE, fontSize: "11px", marginTop: "2px" }}>Voice: {character.identity.voice}</div>}
-            {character.regionalPassive && (
-              <div style={{ color: CODE_VOICE, fontSize: "11px", marginTop: "7px", lineHeight: 1.5 }}>
-                Regional Passive — {character.regionalPassive.key}: {character.regionalPassive.description}
-              </div>
-            )}
-            {character.identity.appearance && (
-              <div style={{ color: SLATE, fontSize: "11px", marginTop: "6px", lineHeight: 1.5 }}>{character.identity.appearance}</div>
-            )}
-            {character.identity.backstory && (
-              <div style={{ color: SLATE, fontSize: "11px", marginTop: "6px", fontStyle: "italic", lineHeight: 1.5 }}>{character.identity.backstory}</div>
-            )}
-          </LedgerSection>
-        )}
-
-        <LedgerSection title="Stats & Resources">
-          <div style={{ color: INK }}>
-            Level {character.level}
-            {character.bankedSkillPoints > 0 && (
-              <span style={{ color: CODE_VOICE, fontSize: "10.5px", marginLeft: "8px" }}>
-                ★ {character.bankedSkillPoints} skill point{character.bankedSkillPoints > 1 ? "s" : ""} banked
-              </span>
-            )}
-          </div>
-          <div style={{ marginTop: "4px", color: character.hp <= characterEffStats.maxHp * 0.3 ? WOUND : INK, display: "flex", alignItems: "center", gap: "6px" }}>
-            <PixelSprite src={heartIcon} alt="" size={18} /> HP {character.hp} / {characterEffStats.maxHp}
-          </div>
-          <div style={{ marginTop: "4px" }}>
-            <StatBar value={character.hp} max={characterEffStats.maxHp} color={character.hp <= characterEffStats.maxHp * 0.3 ? WOUND : BLOOD} />
-          </div>
-          <div style={{ marginTop: "10px", color: AMBER }}>Hunger {Math.floor(character.hunger)}/{character.maxHunger}</div>
-          <StatBar value={character.hunger} max={character.maxHunger} color="#C58A35" />
-          <div style={{ marginTop: "8px", color: SLATE }}>Fatigue {Math.floor(character.fatigue)}/{character.maxFatigue}</div>
-          <StatBar value={character.fatigue} max={character.maxFatigue} color="#77808C" />
-          <div style={{ display: "flex", gap: "5px", flexWrap: "wrap", marginTop: "9px" }}>
-            {resourceStatuses(character).map((status) => <span key={status.id} title={status.description} style={{ border: `1px solid ${status.color}`, color: status.color, padding: "2px 6px", fontSize: "10px", cursor: "help" }}>● {status.label}</span>)}
-            {Object.entries(character.timedEffects || {}).filter(([, effect]) => effect.expiresAt > Date.now()).map(([id]) => { const def = getStatusDef(id); return def ? <span key={id} title={def.description} style={{ border: `1px solid ${CODE_VOICE}`, color: CODE_VOICE, padding: "2px 6px", fontSize: "10px", cursor: "help" }}>● {id.replaceAll("_", " ")}</span> : null; })}
-          </div>
-          <div style={{ marginTop: "8px", color: SLATE, fontSize: "11px", display: "flex", alignItems: "center", gap: "5px", flexWrap: "wrap" }}>
-            XP {character.xp} / {xpToNextLevel(character.level)} · ATK {characterEffStats.atk} · <PixelSprite src={shieldIcon} alt="" size={16} /> DEF {characterEffStats.def}
-          </div>
-          <div style={{ marginTop: "2px", color: SLATE, fontSize: "11px" }}>
-            Crit {characterEffStats.critChance.toFixed(0)}% · Dodge {characterEffStats.dodgeChance.toFixed(0)}%
-          </div>
-          <div style={{ marginTop: "4px" }}>
+            {character.identity.voice && <div style={{ color: SLATE, marginTop: "5px" }}>Voice: {character.identity.voice}</div>}
+            {character.regionalPassive && <div style={{ color: CODE_VOICE, marginTop: "7px", lineHeight: 1.5 }}>Regional Passive — {character.regionalPassive.key}: {character.regionalPassive.description}</div>}
+            {character.identity.appearance && <div style={{ color: SLATE, marginTop: "6px", lineHeight: 1.5 }}>{character.identity.appearance}</div>}
+            {character.identity.backstory && <div style={{ color: SLATE, marginTop: "6px", fontStyle: "italic", lineHeight: 1.5 }}>{character.identity.backstory}</div>}
+          </LedgerSection>}
+          <LedgerSection title="Stats & Resources">
+            <div style={{ color: character.hp <= characterEffStats.maxHp * .3 ? WOUND : INK }}>HP {character.hp}/{characterEffStats.maxHp}</div><StatBar value={character.hp} max={characterEffStats.maxHp} color={BLOOD} />
+            <div style={{ marginTop: "8px", color: AMBER }}>Hunger {Math.floor(character.hunger)}/{character.maxHunger}</div><StatBar value={character.hunger} max={character.maxHunger} color="#C58A35" />
+            <div style={{ marginTop: "8px", color: SLATE }}>Fatigue {Math.floor(character.fatigue)}/{character.maxFatigue}</div><StatBar value={character.fatigue} max={character.maxFatigue} color="#77808C" />
+            <div style={{ marginTop: "9px", color: SLATE }}>XP {character.xp}/{xpToNextLevel(character.level)} · ATK {characterEffStats.atk} · DEF {characterEffStats.def} · Crit {characterEffStats.critChance.toFixed(0)}% · Dodge {characterEffStats.dodgeChance.toFixed(0)}%</div>
             <StatBar value={character.xp} max={xpToNextLevel(character.level)} color={AMBER} height={5} />
-          </div>
-        </LedgerSection>
-
-        <LedgerSection title="Training">
-          <div style={{ color: INK }}>Banked skill points: <span style={{ color: AMBER }}>{character.bankedSkillPoints || 0}</span></div>
-          <div style={{ color: CODE_VOICE, marginTop: "3px" }}>Each session costs 4 Fatigue · {Math.floor(character.fatigue / TRAINING_FATIGUE_COST)} session(s) affordable</div>
-        </LedgerSection>
-
-        <LedgerSection title="Attributes">
-          {Object.entries(ATTRIBUTE_DEFS).map(([key, def]) => {
-            const value = character.attributes[key];
-            const milestone = milestoneFor(value);
-            return (
-              <div key={key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", marginBottom: "6px" }}>
-                <div style={{ color: INK, minWidth: 0 }}>
-                  {def.short} <span style={{ color: AMBER }}>{value}</span>
-                  {milestone && <span style={{ color: SLATE, fontSize: "10.5px", marginLeft: "6px" }}>{milestone.label}</span>}
-                </div>
-              </div>
-            );
-          })}
-        </LedgerSection>
-
-        {((character.injuries || []).length > 0 || (character.scars || []).length > 0) && (
-          <LedgerSection title="Injuries & Scars">
-            {(character.injuries || []).map((injury, index) => (
-              <div key={`injury-${index}`} style={{ color: WOUND, marginBottom: "5px", textTransform: "capitalize" }}>
-                {injury.area} injury · {ATTRIBUTE_DEFS[injury.statKey].short} {injury.amount}
-              </div>
-            ))}
-            {(character.scars || []).map((scar, index) => (
-              <div key={`scar-${index}`} style={{ color: SLATE, fontSize: "10.5px", marginBottom: "4px" }}>{scar.description}</div>
-            ))}
           </LedgerSection>
-        )}
+          <LedgerSection title="Attributes">{Object.entries(ATTRIBUTE_DEFS).map(([key, def]) => <div key={key} style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px", color: INK }}><span>{def.short}</span><span style={{ color: AMBER }}>{character.attributes[key]}</span></div>)}</LedgerSection>
+          <LedgerSection title="Training"><div style={{ color: INK }}>Banked skill points: <span style={{ color: AMBER }}>{character.bankedSkillPoints || 0}</span></div><div style={{ color: CODE_VOICE, marginTop: "3px" }}>Each session costs {TRAINING_FATIGUE_COST} Fatigue</div></LedgerSection>
+        </>}
 
-        <LedgerSection title={`Abilities (${characterEffStats.abilities.length}/${Object.values(ABILITY_TABLE).flat().length})`}>
-          {Object.entries(ABILITY_TABLE).map(([attrKey, abilities]) =>
-            abilities.map((a) => {
-              const unlocked = character.attributes[attrKey] >= a.min;
-              return (
-                <div key={a.key} style={{ marginBottom: "8px", opacity: unlocked ? 1 : 0.5 }}>
-                  <div style={{ color: unlocked ? (a.mechanical ? CODE_VOICE : AMBER) : DIM, fontSize: "12px" }}>
-                    {unlocked ? "●" : "○"} {a.label} <span style={{ color: SLATE, fontSize: "10px" }}>({ATTRIBUTE_DEFS[attrKey].short} {a.min})</span>
-                  </div>
-                  <div style={{ color: SLATE, fontSize: "10.5px", paddingLeft: "14px" }}>{a.description}</div>
-                </div>
-              );
-            })
-          )}
-        </LedgerSection>
+        {ledgerTab === "skills" && <LedgerSection title={`Abilities (${characterEffStats.abilities.length}/${Object.values(ABILITY_TABLE).flat().length})`}>
+          {Object.entries(ABILITY_TABLE).flatMap(([attrKey, abilities]) => abilities.map((ability) => { const unlocked = character.attributes[attrKey] >= ability.min; return <div key={ability.key} style={{ marginBottom: "10px", opacity: unlocked ? 1 : .5 }}><div style={{ color: unlocked ? (ability.mechanical ? CODE_VOICE : AMBER) : DIM }}>{unlocked ? "●" : "○"} {ability.label} <span style={{ color: SLATE, fontSize: "10px" }}>({ATTRIBUTE_DEFS[attrKey].short} {ability.min})</span></div><div style={{ color: SLATE, paddingLeft: "14px", fontSize: "10.5px" }}>{ability.description}</div></div>; }))}
+        </LedgerSection>}
 
-        <LedgerSection title="Gold">
-          <div style={{ color: AMBER, display: "flex", alignItems: "center", gap: "6px" }}><PixelSprite src={coinIcon} alt="" size={20} /> {character.gold}g</div>
-        </LedgerSection>
+        {ledgerTab === "inventory" && <>
+          <div role="tablist" aria-label="Inventory categories" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "5px", marginBottom: "16px" }}>{[["weapons", "Weapons"], ["armor", "Armor"], ["food", "Food"], ["misc", "Miscellaneous"]].map(([tab, label]) => <button key={tab} role="tab" aria-selected={inventoryTab === tab} onClick={() => setInventoryTab(tab)} style={{ padding: "7px 2px", background: inventoryTab === tab ? "#2A2116" : "#100D0A", border: `1px solid ${inventoryTab === tab ? AMBER : DIM}`, color: inventoryTab === tab ? AMBER : SLATE, fontFamily: DISPLAY_FONT, fontSize: "8px", cursor: "pointer" }}>{label}</button>)}</div>
+          <LedgerSection title="Equipped">{["weapon", "armor"].map((slot) => { const item = character.equipped?.[slot]; return <div key={slot} style={{ display: "flex", justifyContent: "space-between", marginBottom: "6px", textTransform: "capitalize", color: item ? INK : DIM }}><span>{slot}: {item?.name || "none"}</span>{item && <button onClick={() => unequipItem(slot)} disabled={loading} style={{ background: "transparent", border: `1px solid ${DIM}`, color: SLATE }}>Unequip</button>}</div>; })}</LedgerSection>
+          <LedgerSection title={`${inventoryTab === "misc" ? "Miscellaneous" : inventoryTab[0].toUpperCase() + inventoryTab.slice(1)}`}>
+            {(() => { const items = character.inventory.filter((item) => { const slot = EQUIPMENT_TABLE[item.equipmentKey]?.slot; const food = !!CONSUMABLE_TABLE[item.consumableKind]?.hungerRestore; return inventoryTab === "weapons" ? slot === "weapon" : inventoryTab === "armor" ? slot === "armor" : inventoryTab === "food" ? food : !slot && !food; }); return items.length ? items.map((item) => <InventoryLedgerItem key={item.id} item={item} loading={loading} onEquip={equipItem} onUse={useConsumable} />) : <div style={{ color: DIM }}>No items in this category.</div>; })()}
+          </LedgerSection>
+        </>}
 
-        <LedgerSection title="Equipped">
-          {["weapon", "armor"].map((slot) => {
-            const equippedItem = character.equipped?.[slot];
-            const def = equippedItem ? EQUIPMENT_TABLE[equippedItem.equipmentKey] : null;
-            const rarity = equippedItem ? RARITY_TIERS[rarityOf(equippedItem)] : null;
-            const itemSprite = equippedItem ? EQUIPMENT_SPRITES[equippedItem.equipmentKey] : null;
-            return (
-              <div key={slot} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", marginBottom: "4px" }}>
-                <div style={{ minWidth: 0, textTransform: "capitalize", display: "flex", alignItems: "center", gap: "6px" }}>
-                  {itemSprite && <PixelSprite src={itemSprite} alt="" size={28} style={{ flexShrink: 0 }} />}
-                  <div>
-                  <span style={{ color: equippedItem ? SLATE : DIM }}>{slot}: </span>
-                  <span style={{ color: equippedItem ? rarity.color : DIM }}>{equippedItem ? equippedItem.name : "none"}</span>
-                  {equippedItem && rarity.label !== "Common" && <span style={{ color: rarity.color, fontSize: "10px", marginLeft: "5px" }}>({rarity.label})</span>}
-                  {def && (
-                    <span style={{ color: CODE_VOICE, fontSize: "10.5px", marginLeft: "6px" }}>
-                      (+{Math.round((slot === "weapon" ? def.atkBonus : def.defBonus) * rarity.statMult)} {slot === "weapon" ? "ATK" : "DEF"})
-                    </span>
-                  )}
-                  </div>
-                </div>
-                {equippedItem && (
-                  <button
-                    onClick={() => unequipItem(slot)}
-                    disabled={loading}
-                    style={{ flexShrink: 0, background: "transparent", border: "1px solid #4A3F2C", color: SLATE, padding: "2px 8px", fontFamily: "ui-monospace, monospace", fontSize: "10.5px", cursor: loading ? "default" : "pointer", opacity: loading ? 0.5 : 1 }}
-                  >
-                    Unequip
-                  </button>
-                )}
-              </div>
-            );
-          })}
-        </LedgerSection>
+        {ledgerTab === "magic" && <LedgerSection title="Known Spells">
+          {SPELL_TABLE.filter((spell) => (character.knownSpells || ["firebolt"]).includes(spell.spellId)).map((spell) => <div key={spell.spellId} style={{ border: `1px solid ${DIM}`, padding: "10px", marginBottom: "8px" }}><div style={{ color: AMBER, fontFamily: DISPLAY_FONT }}>{spell.name}</div><div style={{ color: CODE_VOICE, textTransform: "capitalize", fontSize: "10.5px" }}>{spell.element} · {spell.manaCost} mana</div><div style={{ color: SLATE, marginTop: "5px" }}>{spell.effectType === "damage" ? `Deals ${spell.effectMagnitude} ${spell.element} damage.` : spell.effectType === "heal" ? `Restores ${spell.effectMagnitude} health.` : `Grants a ${spell.effectMagnitude}-point ${spell.effectType.replace("buff_", "")} effect.`}</div></div>)}
+        </LedgerSection>}
 
-        <LedgerSection title={`Inventory (${character.inventory.length})`}>
-          <div style={{ marginBottom: "10px", fontSize: "10px", color: DIM, lineHeight: 1.6 }}>
-            Drop odds:{" "}
-            {Object.entries(RARITY_DROP_WEIGHTS).map(([tier, pct], i) => (
-              <span key={tier}>
-                {i > 0 && " · "}
-                <span style={{ color: RARITY_TIERS[tier].color }}>{RARITY_TIERS[tier].label} {pct}%</span>
-              </span>
-            ))}
-          </div>
-          {character.inventory.length === 0 ? (
-            <div style={{ color: DIM }}>empty</div>
-          ) : (
-            character.inventory.map((item) => {
-              const isConsumable = !!CONSUMABLE_TABLE[item.consumableKind];
-              const equipDef = EQUIPMENT_TABLE[item.equipmentKey];
-              const rarity = RARITY_TIERS[rarityOf(item)];
-              const nameColor = rarity.color;
-              const itemSprite = isConsumable ? healingPotionIcon : EQUIPMENT_SPRITES[item.equipmentKey];
-              return (
-                <div key={item.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px", marginBottom: "6px" }}>
-                  <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: "6px" }}>
-                    {itemSprite && <PixelSprite src={itemSprite} alt="" size={28} style={{ flexShrink: 0 }} />}
-                    <div>
-                      <span style={{ color: nameColor }}>• {item.name}</span>
-                      {rarity.label !== "Common" && <span style={{ color: nameColor, fontSize: "10px", marginLeft: "5px" }}>({rarity.label})</span>}
-                      {item.quantity > 1 && <span style={{ color: SLATE }}> ×{item.quantity}</span>}
-                      {isConsumable && <span style={{ color: CODE_VOICE, fontSize: "10.5px", marginLeft: "6px" }}>{CONSUMABLE_TABLE[item.consumableKind].curesInjury ? "(cures one injury)" : CONSUMABLE_TABLE[item.consumableKind].hungerRestore ? `(+${CONSUMABLE_TABLE[item.consumableKind].hungerRestore} Hunger)` : `(+${Math.round(CONSUMABLE_TABLE[item.consumableKind].healAmount * rarity.statMult)} HP)`}</span>}
-                      {equipDef && <span style={{ color: CODE_VOICE, fontSize: "10.5px", marginLeft: "6px" }}>(+{Math.round((equipDef.slot === "weapon" ? equipDef.atkBonus : equipDef.defBonus) * rarity.statMult)} {equipDef.slot === "weapon" ? "ATK" : "DEF"})</span>}
-                    </div>
-                  </div>
-                  {isConsumable && (
-                    <button
-                      onClick={() => useConsumable(item.id)}
-                      disabled={loading}
-                      style={{ flexShrink: 0, background: "transparent", border: `1px solid ${CODE_VOICE}`, color: CODE_VOICE, padding: "2px 8px", fontFamily: "ui-monospace, monospace", fontSize: "10.5px", cursor: loading ? "default" : "pointer", opacity: loading ? 0.5 : 1 }}
-                    >
-                      Use
-                    </button>
-                  )}
-                  {equipDef && (
-                    <button
-                      onClick={() => equipItem(item.id)}
-                      disabled={loading}
-                      style={{ flexShrink: 0, background: "transparent", border: `1px solid ${CODE_VOICE}`, color: CODE_VOICE, padding: "2px 8px", fontFamily: "ui-monospace, monospace", fontSize: "10.5px", cursor: loading ? "default" : "pointer", opacity: loading ? 0.5 : 1 }}
-                    >
-                      Equip
-                    </button>
-                  )}
-                </div>
-              );
-            })
-          )}
-        </LedgerSection>
+        {ledgerTab === "camp" && <LedgerSection title="Rest Options">
+          {worldState.locations[worldState.locationId]?.type === "settlement" ? <button onClick={() => submitAction("Stay at the local inn and rest for the night")} disabled={loading || !!combat || !!shop} style={{ width: "100%", padding: "10px", background: "#211B14", border: `1px solid ${AMBER}`, color: AMBER, fontFamily: DISPLAY_FONT, cursor: "pointer" }}>Inn Stay</button> : <div style={{ color: DIM }}>No inn is available at this location.</div>}
+          {/* Catnap and Make Camp will be wired here when their shared interruption-risk/action system is implemented. */}
+          <div style={{ marginTop: "12px", color: SLATE }}><div>Catnap <span style={{ color: DIM }}>(camp system pending)</span></div>{worldState.locations[worldState.locationId]?.type !== "settlement" && <div style={{ marginTop: "7px" }}>Make Camp <span style={{ color: DIM }}>(camp system pending)</span></div>}</div>
+        </LedgerSection>}
 
-        <LedgerSection title={<span style={{ display: "flex", alignItems: "center", gap: "6px" }}><PixelSprite src={scrollIcon} alt="" size={18} /> Quests ({quests.length})</span>}>
-          {quests.length === 0 ? (
-            <div style={{ color: DIM }}>none yet</div>
-          ) : (
-            quests.map((q, i) => (
-              <div key={i} style={{ marginBottom: "10px" }}>
-                <div style={{ color: q.status === "complete" ? SLATE : AMBER, textDecoration: q.status === "complete" ? "line-through" : "none" }}>{q.title}</div>
-                <div style={{ color: SLATE, paddingLeft: "8px", fontSize: "11.5px" }}>{q.description}</div>
-              </div>
-            ))
-          )}
-        </LedgerSection>
-
-        <div style={{ borderTop: `2px solid #33291D`, boxShadow: `0 -1px 0 rgba(200,155,74,0.25)`, margin: "20px 0 18px", paddingTop: "16px", fontSize: "12px", color: AMBER, letterSpacing: "0.14em", textTransform: "uppercase", fontFamily: DISPLAY_FONT, display: "flex", alignItems: "center", gap: "8px" }}>
-          <RavenGlyph size={14} /> World Ledger <span style={{ color: DIM, textTransform: "none", letterSpacing: 0, fontFamily: "ui-monospace, monospace", fontSize: "10px" }}>(Claude's narrative memory)</span>
-        </div>
-
-        <LedgerSection title="Location">
-          <div style={{ color: INK }}>{worldState.locations[worldState.locationId]?.name}</div>
-          <div style={{ color: CODE_VOICE, fontSize: "11px", marginTop: "2px" }}>id: {worldState.locationId}</div>
-          {(worldState.locations[worldState.locationId]?.connections || []).length > 0 && (
-            <div style={{ marginTop: "10px" }}>
-              <div style={{ color: SLATE, fontSize: "10.5px", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "6px" }}>Nearby</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
-                {worldState.locations[worldState.locationId].connections.filter((id) => worldState.locations[id]?.discovered).map((id) => {
-                  const location = worldState.locations[id];
-                  const label = locationDisplayName(location);
-                  return (
-                  <button
-                    key={id}
-                    onClick={() => submitAction(`Travel to ${label} [destination existingId: ${id}]`)}
-                    disabled={loading || !!combat || !!shop || !!pendingPurchase}
-                    style={{ background: "transparent", border: `1px ${location.visited ? "solid" : "dashed"} #4A3F2C`, color: location.visited ? SLATE : DIM, padding: "3px 9px", fontFamily: "ui-monospace, monospace", fontSize: "10.5px", fontStyle: location.visited ? "normal" : "italic", cursor: loading || combat || shop || pendingPurchase ? "default" : "pointer", opacity: loading || combat || shop || pendingPurchase ? 0.5 : 1 }}
-                  >
-                    → {label}
-                  </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </LedgerSection>
-
-        <LedgerSection title="Reputation">
-          <div style={{ color: INK }}>{worldState.reputation}</div>
-        </LedgerSection>
-
-        <LedgerSection title={`NPCs Remembered (${worldState.npcs.length})`}>
-          {worldState.npcs.length === 0 ? (
-            <div style={{ color: DIM }}>none yet</div>
-          ) : (
-            worldState.npcs.map((n) => (
-              <div key={n.id} style={{ marginBottom: "12px" }}>
-                <div style={{ color: AMBER }}>
-                  {n.name} <span style={{ color: DIM, fontSize: "11px" }}>({n.id})</span>
-                  {n.merchant && <span style={{ color: CODE_VOICE, fontSize: "10.5px" }}> — {MERCHANT_TYPES[n.merchant.merchantType].label} ({n.merchant.gold}g on hand)</span>}
-                  {isHostile(n) && <span style={{ color: WOUND, fontSize: "10.5px" }}> ⚠ hostile — refuses to trade</span>}
-                </div>
-                <div style={{ color: SLATE, paddingLeft: "8px" }}>{n.memory}</div>
-                <div style={{ color: CODE_VOICE, paddingLeft: "8px", fontSize: "11px", marginTop: "2px" }}>
-                  trust {n.trust ?? 0} · respect {n.respect ?? 0} · fear {n.fear ?? 0}
-                  {n.merchant && trustPriceModifier(n.trust || 0).buyMult !== 1 && (
-                    <span style={{ color: trustPriceModifier(n.trust || 0).buyMult < 1 ? AMBER : WOUND }}>
-                      {" "}({trustPriceModifier(n.trust || 0).buyMult < 1 ? "better" : "worse"} prices)
-                    </span>
-                  )}
-                </div>
-                {n.traits?.length > 0 && (
-                  <div style={{ color: CODE_VOICE, paddingLeft: "8px", fontSize: "11px", marginTop: "2px" }}>{n.traits.join(" · ")}</div>
-                )}
-                {n.goal && (
-                  <div style={{ color: SLATE, paddingLeft: "8px", fontSize: "11px", marginTop: "2px", fontStyle: "italic" }}>Wants: {n.goal}</div>
-                )}
-                {n.secret && (
-                  <div style={{ color: WOUND, paddingLeft: "8px", fontSize: "11px", marginTop: "2px", fontStyle: "italic" }}>Secret: {n.secret}</div>
-                )}
-                {n.isTrainer && (
-                  <div style={{ color: AMBER, paddingLeft: "8px", fontSize: "11px", marginTop: "3px" }}>
-                    {n.trainerSubtype === "deepsinger" ? "Deepsinger" : "Trainer"} · trust required {n.trustRequired || 0} · {(n.trainableStats || []).map((entry) => `${ATTRIBUTE_DEFS[entry.stat]?.short || entry.stat.toUpperCase()} to ${entry.maxLevel}${n.taughtOut?.[entry.stat] ? " (taught out)" : ""}`).join(" · ") || "no disciplines"}
-                  </div>
-                )}
-              </div>
-            ))
-          )}
-        </LedgerSection>
-
-        <LedgerSection title={`World Facts (${worldState.worldFacts.length})`}>
-          {worldState.worldFacts.length === 0 ? (
-            <div style={{ color: DIM }}>none yet</div>
-          ) : (
-            worldState.worldFacts.map((f, i) => (
-              <div key={i} style={{ color: SLATE, marginBottom: "6px" }}>• {f}</div>
-            ))
-          )}
-        </LedgerSection>
-
-        <div style={{ marginTop: "20px", color: DIM, fontSize: "11px", lineHeight: 1.6 }}>
-          Steel-blue lines in the story feed are code-determined outcomes. Everything above the
-          divider is numeric and deterministic; everything below is Claude's qualitative memory.
-        </div>
-        </> : <WorldCompendium worldState={worldState} />}
+        {ledgerTab === "encyclopedia" && <WorldCompendium worldState={worldState} />}
       </div>
       </div>
     </>
@@ -4519,57 +4257,59 @@ function StatBar({ value, max, color, height = 8 }) {
   );
 }
 
-function WorldCompendium({ worldState }) {
-  const [expandedRegion, setExpandedRegion] = useState(null);
-  const discoveredRegions = new Set(Object.values(worldState.locations).filter((location) => location.discovered).map((location) => location.regionId));
-  const loreSection = (title, items, pantheon = false) => items?.length ? (
-    <div style={{ marginTop: "15px" }}>
-      <div style={{ color: AMBER, fontFamily: DISPLAY_FONT, fontSize: "10px", letterSpacing: ".12em", textTransform: "uppercase", borderBottom: `1px solid ${DIM}`, paddingBottom: "4px", marginBottom: "8px" }}>{title}</div>
-      {items.map((item) => (
-        <div key={`${item.name}-${item.title || ""}`} style={{ marginBottom: "10px", lineHeight: 1.5 }}>
-          <div style={{ color: INK, fontFamily: BODY_FONT, fontWeight: 600, fontSize: "14px" }}>{item.name}{pantheon && item.title ? `, ${item.title}` : ""}</div>
-          <div style={{ color: SLATE, fontFamily: BODY_FONT, fontSize: "13px" }}>{item.description}</div>
-        </div>
-      ))}
-    </div>
-  ) : null;
-
+function CollapsibleLoreRow({ title, summary, description }) {
+  const [expanded, setExpanded] = useState(false);
   return (
-    <div>
-      <div style={{ color: SLATE, fontFamily: BODY_FONT, fontSize: "13px", lineHeight: 1.5, marginBottom: "14px" }}>Discover a location to unlock all recorded lore for its region.</div>
-      {WORLD_LORE.map((region) => {
-        const unlocked = discoveredRegions.has(region.regionId);
-        const expanded = unlocked && expandedRegion === region.regionId;
-        return (
-          <div key={region.regionId} style={{ marginBottom: "10px", border: `1px solid ${unlocked ? "#4A3F2C" : "#292620"}`, background: unlocked ? "linear-gradient(145deg, #211B14, #14110D)" : "linear-gradient(145deg, #161513, #0E0D0C)", boxShadow: unlocked ? "inset 0 0 0 1px rgba(200,155,74,.08), 0 3px 10px rgba(0,0,0,.25)" : "inset 0 0 12px rgba(0,0,0,.7)", opacity: unlocked ? 1 : .58 }}>
-            <button disabled={!unlocked} aria-expanded={expanded} onClick={() => setExpandedRegion(expanded ? null : region.regionId)} style={{ width: "100%", border: 0, background: "transparent", padding: "12px", cursor: unlocked ? "pointer" : "default", display: "flex", justifyContent: "space-between", alignItems: "center", color: unlocked ? AMBER : DIM, fontFamily: DISPLAY_FONT, letterSpacing: ".08em", textTransform: "uppercase", textAlign: "left" }}>
-              <span>{region.regionName}</span>
-              <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "9px", letterSpacing: ".06em", color: unlocked ? SLATE : DIM }}>{unlocked ? (expanded ? "close −" : "open +") : "undiscovered"}</span>
-            </button>
-            {expanded && (
-              <div style={{ borderTop: `1px solid ${DIM}`, padding: "12px", background: "linear-gradient(180deg, rgba(233,218,180,.035), transparent)" }}>
-                <div style={{ color: INK, fontFamily: BODY_FONT, fontSize: "13px" }}>{region.dominantRace} · {region.racePercent}</div>
-                <div style={{ marginTop: "12px" }}>
-                  <div style={{ color: AMBER, fontFamily: DISPLAY_FONT, fontSize: "10px", letterSpacing: ".12em", textTransform: "uppercase", marginBottom: "5px" }}>Political Structure</div>
-                  <div style={{ color: SLATE, fontFamily: BODY_FONT, fontSize: "13px", lineHeight: 1.5 }}>{region.politicalStructure}</div>
-                </div>
-                {loreSection(region.pantheon ? "Pantheon" : "Belief System", region.pantheon || region.beliefSystem, !!region.pantheon)}
-                {loreSection("Customs", region.customs)}
-                {loreSection("History", region.history)}
-                <div style={{ marginTop: "15px" }}>
-                  <div style={{ color: AMBER, fontFamily: DISPLAY_FONT, fontSize: "10px", letterSpacing: ".12em", textTransform: "uppercase", borderBottom: `1px solid ${DIM}`, paddingBottom: "4px", marginBottom: "8px" }}>Factions</div>
-                  {region.factions.map((group) => <div key={group.name} style={{ marginBottom: "10px", fontFamily: BODY_FONT, lineHeight: 1.45 }}><div style={{ color: INK, fontWeight: 600, fontSize: "14px" }}>{group.name}</div><div style={{ color: SLATE, fontSize: "13px" }}>{[group.leaderTitle, group.leaderName].filter(Boolean).join(" ")} — {group.trait}{group.description ? ` ${group.description}` : ""}</div></div>)}
-                  {region.wildcard && <div style={{ marginTop: "12px", paddingTop: "9px", borderTop: "1px dashed #4A3F2C", fontFamily: BODY_FONT }}><div style={{ color: CODE_VOICE, fontSize: "10px", textTransform: "uppercase", letterSpacing: ".1em" }}>Wildcard</div><div style={{ color: INK, fontWeight: 600, fontSize: "14px" }}>{region.wildcard.name}</div><div style={{ color: SLATE, fontSize: "13px" }}>{region.wildcard.trait}</div></div>}
-                </div>
-              </div>
-            )}
-          </div>
-        );
-      })}
+    <div style={{ borderBottom: "1px solid #33291D" }}>
+      <button aria-expanded={expanded} onClick={() => setExpanded((value) => !value)} style={{ width: "100%", padding: "8px 2px", border: 0, background: "transparent", color: INK, display: "flex", justifyContent: "space-between", textAlign: "left", cursor: "pointer", fontFamily: BODY_FONT, fontSize: "14px" }}><span>{title}{summary && <span style={{ color: SLATE, fontSize: "12px" }}> — {summary}</span>}</span><span style={{ color: AMBER }}>{expanded ? "−" : "+"}</span></button>
+      {expanded && description && <div style={{ color: SLATE, fontFamily: BODY_FONT, fontSize: "13px", lineHeight: 1.5, padding: "0 8px 9px" }}>{description}</div>}
     </div>
   );
 }
 
+function InventoryLedgerItem({ item, loading, onEquip, onUse }) {
+  const consumable = CONSUMABLE_TABLE[item.consumableKind];
+  const equipment = EQUIPMENT_TABLE[item.equipmentKey];
+  const rarity = RARITY_TIERS[rarityOf(item)];
+  const isFood = !!consumable?.hungerRestore;
+  const sprite = consumable ? healingPotionIcon : EQUIPMENT_SPRITES[item.equipmentKey];
+  return <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px", marginBottom: "8px" }}><div style={{ display: "flex", alignItems: "center", gap: "6px" }}>{sprite && <PixelSprite src={sprite} alt="" size={28} />}<span style={{ color: rarity.color }}>{item.name}{item.quantity > 1 ? ` ×${item.quantity}` : ""}</span></div>{equipment ? <button onClick={() => onEquip(item.id)} disabled={loading} style={{ background: "transparent", border: `1px solid ${CODE_VOICE}`, color: CODE_VOICE }}>Equip</button> : consumable ? <button onClick={() => onUse(item.id)} disabled={loading} style={{ background: "transparent", border: `1px solid ${CODE_VOICE}`, color: CODE_VOICE }}>{isFood ? "Eat" : "Use"}</button> : null}</div>;
+}
+
+function WorldCompendium({ worldState }) {
+  const [expandedRegion, setExpandedRegion] = useState(null);
+  const discoveredCounts = Object.values(worldState.locations).reduce((counts, location) => {
+    if (location.discovered && location.regionId) counts[location.regionId] = (counts[location.regionId] || 0) + 1;
+    return counts;
+  }, {});
+  const totalCounts = Object.values(WORLD_MAP).reduce((counts, location) => {
+    counts[location.regionId] = (counts[location.regionId] || 0) + 1;
+    return counts;
+  }, {});
+  const section = (title, entries, unlocked, pantheon = false) => entries?.length ? <div style={{ marginTop: "15px", opacity: unlocked ? 1 : .45 }}><div style={{ color: unlocked ? AMBER : DIM, fontFamily: DISPLAY_FONT, fontSize: "10px", letterSpacing: ".12em", textTransform: "uppercase", borderBottom: `1px solid ${DIM}`, paddingBottom: "4px" }}>{title} {!unlocked && "— locked"}</div>{unlocked && entries.map((entry) => <CollapsibleLoreRow key={`${entry.name}-${entry.title || ""}`} title={`${entry.name}${pantheon && entry.title ? `, ${entry.title}` : ""}`} description={entry.description} />)}</div> : null;
+
+  return <div>
+    <div style={{ color: SLATE, fontFamily: BODY_FONT, fontSize: "13px", lineHeight: 1.5, marginBottom: "14px" }}>Regional knowledge deepens at 1, 3, 5, and 8 discovered locations (or when every known location in a smaller region is found).</div>
+    {WORLD_LORE.map((region) => {
+      const count = discoveredCounts[region.regionId] || 0;
+      const total = totalCounts[region.regionId] || 0;
+      const fullyDiscovered = count >= Math.min(8, total);
+      const unlocked = count > 0;
+      const expanded = unlocked && expandedRegion === region.regionId;
+      return <div key={region.regionId} style={{ marginBottom: "10px", border: `1px solid ${unlocked ? "#4A3F2C" : "#292620"}`, background: unlocked ? "linear-gradient(145deg, #211B14, #14110D)" : "#0E0D0C", opacity: unlocked ? 1 : .58 }}>
+        <button disabled={!unlocked} aria-expanded={expanded} onClick={() => setExpandedRegion(expanded ? null : region.regionId)} style={{ width: "100%", border: 0, background: "transparent", padding: "12px", cursor: unlocked ? "pointer" : "default", display: "flex", justifyContent: "space-between", color: unlocked ? AMBER : DIM, fontFamily: DISPLAY_FONT, textTransform: "uppercase" }}><span>{region.regionName}</span><span style={{ fontSize: "9px" }}>{unlocked ? `${count}/${total} found ${expanded ? "−" : "+"}` : "undiscovered"}</span></button>
+        {expanded && <div style={{ borderTop: `1px solid ${DIM}`, padding: "12px" }}>
+          <div style={{ color: INK, fontFamily: BODY_FONT }}>{region.dominantRace} · {region.racePercent}</div>
+          <div style={{ marginTop: "12px", color: AMBER, fontFamily: DISPLAY_FONT, fontSize: "10px", textTransform: "uppercase" }}>Political Structure</div><div style={{ color: SLATE, fontFamily: BODY_FONT }}>{region.politicalStructure}</div>
+          <div style={{ marginTop: "15px" }}><div style={{ color: AMBER, fontFamily: DISPLAY_FONT, fontSize: "10px", textTransform: "uppercase", borderBottom: `1px solid ${DIM}` }}>Factions</div>{region.factions.map((group) => <CollapsibleLoreRow key={group.name} title={group.name} summary={[group.leaderTitle, group.leaderName].filter(Boolean).join(" ")} description={count >= 3 ? [group.trait, group.description].filter(Boolean).join(" ") : null} />)}{region.wildcard && <CollapsibleLoreRow title={region.wildcard.name} summary="Wildcard" description={count >= 3 ? region.wildcard.trait : null} />}</div>
+          {section("Customs", region.customs, count >= 3)}
+          {section("History", region.history, count >= 5)}
+          {section(region.pantheon ? "Pantheon" : "Belief System", region.pantheon || region.beliefSystem, fullyDiscovered, !!region.pantheon)}
+        </div>}
+      </div>;
+    })}
+  </div>;
+}
 function LedgerSection({ title, children }) {
   return (
     <div style={{ marginBottom: "22px" }}>
