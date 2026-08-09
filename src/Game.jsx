@@ -43,6 +43,82 @@ import { RUNE_TABLE } from './data/runeData.js';
 
 const INK = "#E4D9BE";
 const AMBER = "#C89B4A";
+const TYPEWRITER_DELAY_MS = 45;
+const ROLL_FLICKERS = 13;
+
+const textSegments = (value) => [{ type: "text", value: String(value) }];
+const rollSegments = (before, chance, outcome, after = "") => [
+  { type: "text", value: before },
+  { type: "roll", chance, outcome: !!outcome },
+  ...(after ? [{ type: "text", value: after }] : []),
+];
+
+function entrySegments(entry) {
+  if (Array.isArray(entry.segments)) return entry.segments;
+  return textSegments(entry.role === "dm" ? entry.narration || "" : entry.text || "");
+}
+
+function useSequentialFeedReveal(log) {
+  const [visible, setVisible] = useState([]);
+  const [cursor, setCursor] = useState(0);
+  const [revealing, setRevealing] = useState(log.length > 0);
+
+  useEffect(() => {
+    if (cursor >= log.length) {
+      setRevealing(false);
+      return undefined;
+    }
+    let cancelled = false;
+    const wait = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
+    const updateSegment = (segmentIndex, rendered) => {
+      if (cancelled) return;
+      setVisible((current) => {
+        const next = [...current];
+        const line = next[cursor] ? { ...next[cursor] } : { segments: [] };
+        const segments = [...line.segments];
+        segments[segmentIndex] = rendered;
+        line.segments = segments;
+        next[cursor] = line;
+        return next;
+      });
+    };
+
+    setRevealing(true);
+    (async () => {
+      const segments = entrySegments(log[cursor]);
+      for (let segmentIndex = 0; segmentIndex < segments.length && !cancelled; segmentIndex += 1) {
+        const segment = segments[segmentIndex];
+        if (segment.type === "roll") {
+          for (let flip = 0; flip < ROLL_FLICKERS && !cancelled; flip += 1) {
+            const success = Math.random() >= 0.5;
+            updateSegment(segmentIndex, { type: "roll", value: success ? "success" : "failure", outcome: success, chance: segment.chance });
+            await wait(35 + flip * 12);
+          }
+          updateSegment(segmentIndex, { type: "roll", value: segment.outcome ? "success" : "failure", outcome: segment.outcome, chance: segment.chance });
+          await wait(400);
+        } else {
+          const value = String(segment.value || "");
+          for (let length = 1; length <= value.length && !cancelled; length += 1) {
+            updateSegment(segmentIndex, { type: "text", value: value.slice(0, length) });
+            await wait(TYPEWRITER_DELAY_MS);
+          }
+        }
+      }
+      if (!cancelled) setCursor((value) => value + 1);
+    })();
+    return () => { cancelled = true; };
+  }, [cursor, log.length]);
+
+  return { visible, revealing: revealing || cursor < log.length };
+}
+
+function RevealedLine({ line }) {
+  return (line?.segments || []).map((segment, index) => segment?.type === "roll" ? (
+    <span key={index} title={`${segment.chance}% chance`} style={{ color: segment.outcome ? "#55C987" : "#E05D68", fontWeight: 700 }}>
+      {segment.value}
+    </span>
+  ) : <React.Fragment key={index}>{segment?.value || ""}</React.Fragment>);
+}
 const BLOOD = "#7A2333";
 const SLATE = "#8B8577";
 const DIM = "#5C5648";
@@ -1743,7 +1819,16 @@ export default function DMMemoryTest() {
   const [manualSaveStatus, setManualSaveStatus] = useState(null); // transient message, e.g. "Saved!" / "Loaded!"
   const [identityMode, setIdentityMode] = useState("new"); // "new" = fresh game, "migrate" = an existing save from before this system existed
   const [tutorialStep, setTutorialStep] = useState(0);
+  const [combatActionTab, setCombatActionTab] = useState("physical");
   const scrollRef = useRef(null);
+  const previousCombatRef = useRef(false);
+  const { visible: revealedLog, revealing: feedRevealing } = useSequentialFeedReveal(log);
+  const actionsDisabled = loading || feedRevealing;
+
+  useEffect(() => {
+    if (combat && !previousCombatRef.current) setCombatActionTab("physical");
+    previousCombatRef.current = !!combat;
+  }, [combat]);
 
   // Hunger and fatigue share one active-play clock. Fractional fatigue preserves the
   // exact 0.375 relative rate and remains saveable like every other character field.
@@ -1777,7 +1862,7 @@ export default function DMMemoryTest() {
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [log, loading]);
+  }, [log, loading, revealedLog]);
 
   // Restores game state from a parsed save object — shared by the autosave-load-on-mount
   // effect and the manual Load button, so both go through the exact same migration
@@ -2154,8 +2239,9 @@ export default function DMMemoryTest() {
     setDiagnosing4(false);
   }
 
-  function pushSystemLine(text) {
-    setLog((l) => [...l, { role: "system", text }]);
+  function pushSystemLine(content) {
+    const segments = Array.isArray(content) ? content : textSegments(content);
+    setLog((l) => [...l, { role: "system", segments }]);
   }
 
   // Adds a looted item to inventory, stacking onto an existing entry of the same name/
@@ -2777,7 +2863,7 @@ export default function DMMemoryTest() {
 
       if (offeredCheck) {
         setPendingSkillCheck(null);
-        pushSystemLine(`${skillCheckFacts.passed ? "✓" : "✗"} ${odds.check.label} check ${skillCheckFacts.passed ? "passed" : "failed"} (${odds.chance}% chance · ${odds.difficultyTier.toUpperCase()})`);
+        pushSystemLine(rollSegments(`${odds.check.label} check (${odds.chance}% · ${odds.difficultyTier.toUpperCase()}): `, odds.chance, skillCheckFacts.passed));
       }
       setLog((l) => [...l, { role: "dm", narration, suggestedActions, interactionType: validatedInteractionType }]);
       processEvents(events);
@@ -2808,12 +2894,14 @@ export default function DMMemoryTest() {
     if (actionType === "flee") {
       const escaped = Math.random() < effStats.fleeChance;
       facts.fled = escaped;
+      facts.fleeChance = effStats.fleeChance * 100;
       if (!escaped) {
         const { dmg, dodged, missed } = rollIncomingHit(enemy.attack, effStats.def, effStats.dodgeChance, enemyBaseHitChance);
         nextCharacter.hp = Math.max(0, nextCharacter.hp - dmg);
         facts.enemyDamageDealt = dmg;
         facts.playerDodged = dodged;
         facts.enemyMissed = missed;
+        facts.enemyHitChance = enemyBaseHitChance;
         facts.playerHpRemaining = nextCharacter.hp;
       }
     } else if (actionType === "second_wind") {
@@ -2829,6 +2917,7 @@ export default function DMMemoryTest() {
       facts.enemyDamageDealt = dmg;
       facts.playerDodged = dodged;
       facts.enemyMissed = missed;
+      facts.enemyHitChance = enemyBaseHitChance;
       facts.playerHpRemaining = nextCharacter.hp;
     } else {
       const incomingDefenseBonus = actionType === "defend" ? Math.floor(effStats.def / 2) + 3 : 0;
@@ -2845,6 +2934,8 @@ export default function DMMemoryTest() {
         facts.playerDamageDealt = finalDmg;
         facts.playerCrit = crit;
         facts.playerMissed = missed;
+        facts.playerHitChance = attackHitChance;
+        facts.critChance = effStats.critChance;
         facts.powerStrike = isPowerStrike;
         const weaponDef = nextCharacter.equipped?.weapon ? EQUIPMENT_TABLE[nextCharacter.equipped.weapon.equipmentKey] : null;
         const aspect = aspectForWeapon(weaponDef);
@@ -2852,6 +2943,7 @@ export default function DMMemoryTest() {
           const statusAttempt = attemptApplyStatus(enemy, aspect.appliesStatus, nextCharacter.attributes[aspect.scalesWith] || 10);
           enemy = statusAttempt.target;
           facts.aspectStatus = { aspect: aspect.aspectId, status: aspect.appliesStatus, applied: statusAttempt.applied, reason: statusAttempt.reason || null };
+          facts.aspectProcChance = (getStatusDef(aspect.appliesStatus)?.procCap ?? 1) * 100;
         }
         facts.enemyHpRemaining = enemy.hp;
       }
@@ -2860,6 +2952,7 @@ export default function DMMemoryTest() {
       // lands and doesn't finish the enemy off — a weaker foe may just break and run.
       if (!facts.enemyDefeated && !facts.playerMissed && (actionType === "attack" || isPowerStrike) && effStats.hasIntimidatingPresence) {
         facts.enemyFled = Math.random() < 0.2;
+        facts.intimidateChance = 20;
       }
       if (!facts.enemyDefeated && !facts.enemyFled) {
         const openDefense = isPowerStrike ? Math.floor(effStats.def / 2) : effStats.def + incomingDefenseBonus;
@@ -2870,6 +2963,7 @@ export default function DMMemoryTest() {
         facts.enemyDamageDealt = finalEnemyDmg;
         facts.playerDodged = dodged;
         facts.enemyMissed = missed;
+        facts.enemyHitChance = enemyHitChance;
         facts.playerHpRemaining = nextCharacter.hp;
       }
     }
@@ -2897,6 +2991,7 @@ export default function DMMemoryTest() {
       facts.deathChance = deathRisk.chance;
       facts.powerRatio = deathRisk.powerRatio;
       facts.playerDied = died;
+      facts.deathRollChance = deathRisk.chance * 100;
 
       if (died) {
         nextCharacter.hp = 0;
@@ -2924,8 +3019,31 @@ export default function DMMemoryTest() {
     const combatEnded = facts.enemyDefeated || facts.playerDefeated || facts.fled === true || facts.enemyFled === true;
     setCombat(combatEnded ? null : { ...combat, enemy, secondWindUsed: combat.secondWindUsed || actionType === "second_wind" });
 
+    const rollLines = [];
+    if (typeof facts.fleeChance === "number") rollLines.push(rollSegments(`Flee attempt (${facts.fleeChance.toFixed(0)}%): `, facts.fleeChance, facts.fled));
+    if (typeof facts.playerHitChance === "number") {
+      rollLines.push(rollSegments(`Attack accuracy (${facts.playerHitChance.toFixed(0)}%): `, facts.playerHitChance, !facts.playerMissed));
+      if (!facts.playerMissed) rollLines.push(rollSegments(`Critical strike (${facts.critChance.toFixed(0)}%): `, facts.critChance, facts.playerCrit));
+    }
+    if (typeof facts.aspectProcChance === "number" && facts.aspectProcChance < 100) rollLines.push(rollSegments(`${facts.aspectStatus.status} proc (${facts.aspectProcChance.toFixed(0)}%): `, facts.aspectProcChance, facts.aspectStatus.applied));
+    if (typeof facts.intimidateChance === "number") rollLines.push(rollSegments(`Intimidating Presence (${facts.intimidateChance}%): `, facts.intimidateChance, facts.enemyFled));
+    if (typeof facts.enemyHitChance === "number") {
+      rollLines.push(rollSegments(`Enemy accuracy (${facts.enemyHitChance.toFixed(0)}%): `, facts.enemyHitChance, !facts.enemyMissed));
+      if (!facts.enemyMissed) rollLines.push(rollSegments(`Dodge (${effStats.dodgeChance.toFixed(0)}%): `, effStats.dodgeChance, facts.playerDodged));
+    }
+    if (typeof facts.deathRollChance === "number") rollLines.push(rollSegments(`Mortal peril (${facts.deathRollChance.toFixed(0)}%): `, facts.deathRollChance, facts.playerDied));
+    if (rollLines.length) setLog((current) => [...current, ...rollLines.map((segments) => ({ role: "system", segments }))]);
+    // Display metadata never enters the narrator request; its payload remains the same
+    // already-resolved mechanical facts it received before this presentation overhaul.
+    const {
+      fleeChance: _fleeChance, enemyHitChance: _enemyHitChance,
+      playerHitChance: _playerHitChance, critChance: _critChance,
+      aspectProcChance: _aspectProcChance, intimidateChance: _intimidateChance,
+      deathRollChance: _deathRollChance, ...narrationFacts
+    } = facts;
+
     try {
-      const result = await callModel(COMBAT_NARRATION_SYSTEM_PROMPT, JSON.stringify(facts, null, 2), 400, 1, null, (info) => pushDebugEntry(`combat:${actionType}`, info));
+      const result = await callModel(COMBAT_NARRATION_SYSTEM_PROMPT, JSON.stringify(narrationFacts, null, 2), 400, 1, null, (info) => pushDebugEntry(`combat:${actionType}`, info));
       setInteractionType("standard");
       setLog((l) => [...l, { role: "dm", narration: result.narration, suggestedActions: combatEnded ? ["Look around", "Check inventory", "Continue on"] : null, interactionType: "standard" }]);
       if (facts.enemyDefeated) pushSystemLine(`✓ Enemy defeated (+${facts.xpGained} XP, +${facts.goldGained} gold)${nextCharacter.levelUps?.length ? ` — Level up! Now level ${nextCharacter.level}; ${ATTRIBUTE_POINTS_PER_LEVEL} skill points banked.` : ""}`);
@@ -3110,37 +3228,30 @@ export default function DMMemoryTest() {
             </div>
           </div>
           {log.map((entry, i) => {
+            const revealed = revealedLog[i];
             if (entry.role === "player") {
               return (
                 <div key={i} style={{ margin: "20px 0", paddingLeft: "16px", borderLeft: `3px solid ${AMBER}`, color: AMBER, fontFamily: DISPLAY_FONT, fontSize: "13.5px", letterSpacing: "0.03em" }}>
-                  {entry.text}
+                  <RevealedLine line={revealed} />
                 </div>
               );
             }
             if (entry.role === "system") {
               return (
                 <div key={i} style={{ margin: "6px 0", color: CODE_VOICE, fontFamily: "ui-monospace, monospace", fontSize: "13px" }}>
-                  {entry.text}
+                  <RevealedLine line={revealed} />
                 </div>
               );
             }
-            const trimmed = (entry.narration || "").trim();
-            const dropCap = trimmed.charAt(0);
-            const rest = trimmed.slice(1);
             return (
               <div key={i} style={{ margin: "22px 0", paddingLeft: "16px", borderLeft: "1px solid #2E2820" }}>
                 <p style={{ lineHeight: 1.75, fontSize: "17px", margin: 0, whiteSpace: "pre-wrap" }}>
-                  {dropCap && (
-                    <span style={{ fontFamily: DISPLAY_FONT, fontSize: "32px", fontWeight: 700, color: AMBER, marginRight: "2px", lineHeight: 0 }}>
-                      {dropCap}
-                    </span>
-                  )}
-                  {rest}
+                  <RevealedLine line={revealed} />
                 </p>
                 {entry.suggestedActions && (
                   <div style={{ marginTop: "14px", display: "flex", flexWrap: "wrap", gap: "8px" }}>
                     {entry.suggestedActions.map((a, j) => (
-                      <button key={j} onClick={() => submitAction(a)} disabled={loading || !!combat || !!shop || !!pendingPurchase || !!trainingOffer} style={{ background: "linear-gradient(180deg, #241D15 0%, #1A150F 100%)", border: "1px solid #4A3F2C", color: INK, padding: "7px 14px", fontFamily: DISPLAY_FONT, fontSize: "11.5px", letterSpacing: "0.03em", cursor: loading || combat || shop || pendingPurchase || trainingOffer ? "default" : "pointer", opacity: loading || combat || shop || pendingPurchase || trainingOffer ? 0.5 : 1, borderRadius: "2px" }}>
+                      <button key={j} onClick={() => submitAction(a)} disabled={actionsDisabled || !!combat || !!shop || !!pendingPurchase || !!trainingOffer} style={{ background: "linear-gradient(180deg, #241D15 0%, #1A150F 100%)", border: "1px solid #4A3F2C", color: INK, padding: "7px 14px", fontFamily: DISPLAY_FONT, fontSize: "11.5px", letterSpacing: "0.03em", cursor: actionsDisabled || combat || shop || pendingPurchase || trainingOffer ? "default" : "pointer", opacity: actionsDisabled || combat || shop || pendingPurchase || trainingOffer ? 0.5 : 1, borderRadius: "2px" }}>
                         {a}
                       </button>
                     ))}
@@ -3161,22 +3272,19 @@ export default function DMMemoryTest() {
                   <StatBar value={combat.enemy.hp} max={combat.enemy.maxHp} color={BLOOD} height={7} />
                 </div>
               </div>
+              <div role="tablist" aria-label="Combat action categories" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "6px", margin: "14px 0 10px" }}>
+                {["physical", "magic", "tactics"].map((tab) => <button key={tab} role="tab" aria-selected={combatActionTab === tab} onClick={() => setCombatActionTab(tab)} style={{ padding: "8px", cursor: "pointer", fontFamily: DISPLAY_FONT, letterSpacing: ".08em", textTransform: "uppercase", fontSize: "10.5px", color: combatActionTab === tab ? AMBER : SLATE, background: combatActionTab === tab ? "linear-gradient(180deg, #2A2116, #17130F)" : "#100D0A", border: `1px solid ${combatActionTab === tab ? AMBER : DIM}`, boxShadow: combatActionTab === tab ? "inset 0 0 0 1px #33291D" : "none" }}>{tab}</button>)}
+              </div>
               <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                {["attack", "defend", "flee"].map((a) => (
-                  <button key={a} onClick={() => handleCombatAction(a)} disabled={loading} style={{ background: a === "attack" ? `linear-gradient(180deg, ${BLOOD} 0%, #4A1620 100%)` : "linear-gradient(180deg, #241D15 0%, #1A150F 100%)", border: `1px solid ${a === "attack" ? BLOOD : "#4A3F2C"}`, color: INK, padding: "9px 18px", fontFamily: DISPLAY_FONT, fontSize: "12.5px", letterSpacing: "0.05em", textTransform: "uppercase", cursor: loading ? "default" : "pointer", opacity: loading ? 0.5 : 1, borderRadius: "2px" }}>
-                    {combatActionLabels[a]}
-                  </button>
-                ))}
-                {characterEffStats.hasPowerStrike && (
-                  <button onClick={() => handleCombatAction("power_strike")} disabled={loading} title="More damage, but a weaker guard on the counter" style={{ background: "linear-gradient(180deg, #5A2A12 0%, #2E1608 100%)", border: `1px solid ${AMBER}`, color: INK, padding: "9px 18px", fontFamily: DISPLAY_FONT, fontSize: "12.5px", letterSpacing: "0.05em", textTransform: "uppercase", cursor: loading ? "default" : "pointer", opacity: loading ? 0.5 : 1, borderRadius: "2px" }}>
-                    Power Strike ({Math.max(15, combatPlayerHitChance - 20).toFixed(0)}%)
-                  </button>
-                )}
-                {characterEffStats.hasSecondWind && !combat.secondWindUsed && (
-                  <button onClick={() => handleCombatAction("second_wind")} disabled={loading} title="Once per fight: recover some health" style={{ background: "linear-gradient(180deg, #123A2E 0%, #081F18 100%)", border: `1px solid ${CODE_VOICE}`, color: INK, padding: "9px 18px", fontFamily: DISPLAY_FONT, fontSize: "12.5px", letterSpacing: "0.05em", textTransform: "uppercase", cursor: loading ? "default" : "pointer", opacity: loading ? 0.5 : 1, borderRadius: "2px" }}>
-                    Second Wind
-                  </button>
-                )}
+                {combatActionTab === "physical" && [
+                  { id: "attack", label: combatActionLabels.attack },
+                  ...(characterEffStats.hasPowerStrike ? [{ id: "power_strike", label: `Power Strike (${Math.max(15, combatPlayerHitChance - 20).toFixed(0)}%)` }] : []),
+                ].map((action) => <button key={action.id} onClick={() => handleCombatAction(action.id)} disabled={actionsDisabled} style={{ background: `linear-gradient(180deg, ${BLOOD} 0%, #4A1620 100%)`, border: `1px solid ${BLOOD}`, color: INK, padding: "9px 18px", fontFamily: DISPLAY_FONT, fontSize: "12.5px", letterSpacing: "0.05em", textTransform: "uppercase", cursor: actionsDisabled ? "default" : "pointer", opacity: actionsDisabled ? 0.5 : 1, borderRadius: "2px" }}>{action.label}</button>)}
+                {combatActionTab === "magic" && <span style={{ color: DIM, fontStyle: "italic" }}>No mana abilities available.</span>}
+                {combatActionTab === "tactics" && [
+                  { id: "defend", label: combatActionLabels.defend }, { id: "flee", label: combatActionLabels.flee },
+                  ...(characterEffStats.hasSecondWind && !combat.secondWindUsed ? [{ id: "second_wind", label: "Second Wind" }] : []),
+                ].map((action) => <button key={action.id} onClick={() => handleCombatAction(action.id)} disabled={actionsDisabled} style={{ background: "linear-gradient(180deg, #241D15 0%, #1A150F 100%)", border: "1px solid #4A3F2C", color: INK, padding: "9px 18px", fontFamily: DISPLAY_FONT, fontSize: "12.5px", letterSpacing: "0.05em", textTransform: "uppercase", cursor: actionsDisabled ? "default" : "pointer", opacity: actionsDisabled ? 0.5 : 1, borderRadius: "2px" }}>{action.label}</button>)}
               </div>
             </div>
           )}
@@ -3189,7 +3297,7 @@ export default function DMMemoryTest() {
               onBuy={buyFromShop}
               onSell={sellToShop}
               onClose={closeShop}
-              loading={loading}
+              loading={actionsDisabled}
             />
           )}
 
@@ -3199,7 +3307,7 @@ export default function DMMemoryTest() {
               character={character}
               onPay={payPendingPurchase}
               onDecline={declinePendingPurchase}
-              loading={loading}
+              loading={actionsDisabled}
             />
           )}
 
@@ -3210,6 +3318,7 @@ export default function DMMemoryTest() {
               character={character}
               onAccept={acceptTraining}
               onDecline={() => setTrainingOffer(null)}
+              disabled={actionsDisabled}
             />
           )}
 
@@ -3272,8 +3381,8 @@ export default function DMMemoryTest() {
           </div>;
         })()}
         {(interactionType === "quest_decision" || interactionType === "climactic_dialogue") && <form onSubmit={(e) => { e.preventDefault(); submitAction(input); }} style={{ display: "flex", borderTop: pendingSkillCheck ? "none" : "1px solid #33291D", padding: "12px 16px", gap: "10px" }}>
-          <input value={input} onChange={(e) => setInput(e.target.value)} placeholder={combat ? "Resolve combat above first..." : shop ? "Finish trading above first..." : pendingPurchase ? "Answer the purchase prompt above first..." : trainingOffer ? "Answer the training offer above first..." : "What do you do?"} disabled={loading || !!combat || !!shop || !!pendingPurchase || !!trainingOffer} style={{ flex: 1, background: "#1A1611", border: "1px solid #33291D", color: INK, padding: "10px 12px", fontFamily: BODY_FONT, fontSize: "15px", outline: "none", opacity: combat || shop || pendingPurchase || trainingOffer ? 0.4 : 1, borderRadius: "2px" }} />
-          <button type="submit" disabled={loading || !!combat || !!shop || !!pendingPurchase || !!trainingOffer} style={{ background: `linear-gradient(180deg, ${BLOOD} 0%, #4A1620 100%)`, border: `1px solid ${BLOOD}`, color: INK, padding: "10px 20px", fontFamily: DISPLAY_FONT, fontSize: "12.5px", letterSpacing: "0.06em", textTransform: "uppercase", cursor: loading || combat || shop || pendingPurchase || trainingOffer ? "default" : "pointer", opacity: loading || combat || shop || pendingPurchase || trainingOffer ? 0.5 : 1, borderRadius: "2px" }}>
+          <input value={input} onChange={(e) => setInput(e.target.value)} placeholder={combat ? "Resolve combat above first..." : shop ? "Finish trading above first..." : pendingPurchase ? "Answer the purchase prompt above first..." : trainingOffer ? "Answer the training offer above first..." : "What do you do?"} disabled={actionsDisabled || !!combat || !!shop || !!pendingPurchase || !!trainingOffer} style={{ flex: 1, background: "#1A1611", border: "1px solid #33291D", color: INK, padding: "10px 12px", fontFamily: BODY_FONT, fontSize: "15px", outline: "none", opacity: combat || shop || pendingPurchase || trainingOffer ? 0.4 : 1, borderRadius: "2px" }} />
+          <button type="submit" disabled={actionsDisabled || !!combat || !!shop || !!pendingPurchase || !!trainingOffer} style={{ background: `linear-gradient(180deg, ${BLOOD} 0%, #4A1620 100%)`, border: `1px solid ${BLOOD}`, color: INK, padding: "10px 20px", fontFamily: DISPLAY_FONT, fontSize: "12.5px", letterSpacing: "0.06em", textTransform: "uppercase", cursor: actionsDisabled || combat || shop || pendingPurchase || trainingOffer ? "default" : "pointer", opacity: actionsDisabled || combat || shop || pendingPurchase || trainingOffer ? 0.5 : 1, borderRadius: "2px" }}>
             Act
           </button>
         </form>}
@@ -4378,7 +4487,7 @@ function PurchaseConfirmPanel({ purchase, character, onPay, onDecline, loading }
 // a bordered box means code has taken over and text input is paused until you're done.
 // Spending never calls the AI, and there's no soft cap here beyond ATTRIBUTE_CAP itself —
 // dumping every point into one attribute is a fully valid, supported build choice.
-function TrainingPanel({ trainer, stat, character, onAccept, onDecline }) {
+function TrainingPanel({ trainer, stat, character, onAccept, onDecline, disabled = false }) {
   const lesson = trainer.trainableStats.find((entry) => entry.stat === stat);
   const current = character.attributes[stat];
   const cost = trainingCostFor(current);
@@ -4393,8 +4502,8 @@ function TrainingPanel({ trainer, stat, character, onAccept, onDecline }) {
       <div style={{ color: SLATE, fontFamily: "ui-monospace, monospace", fontSize: "11px", marginBottom: "12px" }}>{cost} gold · 1 banked skill point · 4 Fatigue</div>
       {reason && <div style={{ color: WOUND, marginBottom: "10px" }}>{reason}</div>}
       <div style={{ display: "flex", gap: "8px" }}>
-        <button onClick={onAccept} disabled={!!reason} style={{ background: reason ? "transparent" : `linear-gradient(180deg, ${BLOOD} 0%, #4A1620 100%)`, border: `1px solid ${reason ? DIM : BLOOD}`, color: reason ? DIM : INK, padding: "8px 16px", cursor: reason ? "default" : "pointer", fontFamily: DISPLAY_FONT }}>Accept lesson</button>
-        <button onClick={onDecline} style={{ background: "transparent", border: "1px solid #4A3F2C", color: SLATE, padding: "8px 16px", cursor: "pointer", fontFamily: DISPLAY_FONT }}>Not now</button>
+        <button onClick={onAccept} disabled={disabled || !!reason} style={{ background: reason ? "transparent" : `linear-gradient(180deg, ${BLOOD} 0%, #4A1620 100%)`, border: `1px solid ${reason ? DIM : BLOOD}`, color: reason ? DIM : INK, padding: "8px 16px", cursor: disabled || reason ? "default" : "pointer", opacity: disabled ? 0.5 : 1, fontFamily: DISPLAY_FONT }}>Accept lesson</button>
+        <button onClick={onDecline} disabled={disabled} style={{ background: "transparent", border: "1px solid #4A3F2C", color: SLATE, padding: "8px 16px", cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.5 : 1, fontFamily: DISPLAY_FONT }}>Not now</button>
       </div>
     </div>
   );
