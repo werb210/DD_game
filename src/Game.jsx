@@ -36,6 +36,7 @@ import { STATUS_EFFECT_TABLE } from './data/statusEffectData.js';
 import { WEAPON_ASPECT_TABLE } from './data/weaponAspectData.js';
 import { RUNE_TABLE } from './data/runeData.js';
 import { FACTION_IDS, adjustFactionReputation, getFactionTier, seedFactionReputation } from './data/factionReputation.js';
+import { clampPersonalAxes, factionDeltaFor, getDisposition, visibleDialogueChoices, withDialogueDefaults } from './data/dialogueConsequences.js';
 import { AVAILABLE_OCCUPATIONS, SLOT_SCALING, WARRIOR_PATHS, WARRIOR_THRESHOLDS, WARRIOR_TITLES, availableWeaponMoves, freshWarrior, freshWarriorChoices, pendingWarriorChoice, rankForWarriorXp, slotIsUnlocked, warriorPassiveBonuses, warriorSlots, warriorXpGain } from './data/warriorOccupation.js';
 
 // ---- Design tokens ----
@@ -135,6 +136,7 @@ const SLATE = "#8B8577";
 const DIM = "#5C5648";
 const CODE_VOICE = "#7FA0AE"; // cold steel-blue — reserved ONLY for code-determined outcomes
 const WOUND = "#B23A3A"; // low-HP / error tone, blood rather than coral
+const TONE_COLORS = Object.freeze({ Compassionate: "#55A884", Aggressive: WOUND, Charming: "#B482C4", Logical: CODE_VOICE, Suspicious: "#C58A35", Neutral: SLATE, Deceptive: "#8C6FAE" });
 
 // Map-only palette. The rest of the UI is dark iron/parchment-ink-on-black; the map
 // itself deliberately flips to a light, aged-paper look — the idea of unrolling an
@@ -1246,6 +1248,7 @@ Respond with ONLY valid JSON, no markdown fences, no preamble:
     ,{"type": "location_hint", "existingId": "exact WORLD MAP location id"}
     ,{"type": "day_advance", "reason": "short description of the sleep or time skip"}
     ,{"type": "skill_check_offer", "checkType": "force|finesse|endure|discern|perceive|sway", "npcId": "optional exact existing npc id when a specific person is involved"}
+    ,{"type": "dialogue_offer", "npcId": "exact existing NPC id", "choices": [{"text": "string", "tag": "Compassionate|Aggressive|Charming|Logical|Suspicious|Neutral|Deceptive", "axis": {"compassion": 0, "honesty": 0, "diplomacy": 0}, "trf": {"trust": 0, "respect": 0, "fear": 0}, "requiresGoodwill": "optional boolean", "allowedWhenHostile": "optional boolean", "significant": "optional boolean", "statCheck": "optional object replacing axis/trf: {stat, chance, axisSuccess, axisFail, trfSuccess, trfFail}"}]}
   ],
   "suggestedActions": ["string", "string", "string"]
 }
@@ -1253,6 +1256,8 @@ Respond with ONLY valid JSON, no markdown fences, no preamble:
 For "location": use null if unchanged or {"existingId": "exact id"} for every real named settlement or point of interest in WORLD MAP. The rare {"newDisplayName": "string"} path is reserved only for minor, disposable, scene-specific flavor spots such as a particular room, back alley, or campsite. Never use newDisplayName to create a settlement, landmark, dungeon, or persistent travel destination, and never use it for a named WORLD MAP place.
 
 Emit location_hint only when the fiction clearly gives the player a real, actionable lead to a WORLD MAP place: an NPC names a destination, gives clear directions, or marks it on a map. Use its exact existingId. Do NOT emit it for passing references, distant lore, or vague world-flavor mentions that do not tell the player where they could actually go.
+
+Use dialogue_offer whenever an existing named NPC presents discrete replies. Every choice must have exactly one listed tone tag and hand-authored axis/trf effects (or one statCheck instead). Always include at least one Neutral leave choice with allowedWhenHostile true. Do not derive effects from tags.
 
 Each entry in WORLD STATE.locations has a "connections" array — the other location ids directly reachable from it based on where the player has actually traveled before. Moving to a location already listed in the current location's connections is a short, ordinary trip — narrate it briefly. Moving to a known location that ISN'T in the current connections (somewhere the player has heard of but never traveled to directly from here) should read like a real journey — time passing, distance covered — rather than an instant unexplained jump, even though it's still a single action. Code will automatically treat any move as establishing a new direct route between the two places, so once you've narrated that journey once, future trips between them can be brief.
 
@@ -1831,6 +1836,8 @@ export default function DMMemoryTest() {
   const [pendingPurchase, setPendingPurchase] = useState(null); // { reason, tier, amount }
   const [trainingOffer, setTrainingOffer] = useState(null); // { npcId, stat }
   const [pendingSkillCheck, setPendingSkillCheck] = useState(null); // { checkType, npcId? }
+  const [dialogueOffer, setDialogueOffer] = useState(null); // { npcId, choices }
+  const dialogueRewardsRef = useRef(new Set());
   // Monotonic ID counters — refs, not state, since incrementing them shouldn't itself
   // trigger a render. Code is the only thing that ever assigns an id; Claude only ever
   // receives and echoes them back (for npc/location ids) or never sees them at all (items).
@@ -1937,7 +1944,7 @@ export default function DMMemoryTest() {
       });
       revealArrival(migratedLocations, savedLocationId);
       const migratedNpcs = (saved.worldState.npcs || []).map((npc) => ({
-        ...npc,
+        ...withDialogueDefaults(npc),
         isTrainer: !!npc.isTrainer,
         trainableStats: Array.isArray(npc.trainableStats) ? npc.trainableStats : [],
         taughtOut: npc.taughtOut || {},
@@ -2012,6 +2019,8 @@ export default function DMMemoryTest() {
     setShop(null); // shop panels never persist — always resume back out in the world
     setPendingPurchase(null); // unresolved purchase prompts are transient, like shops
     setTrainingOffer(null);
+    setDialogueOffer(null);
+    dialogueRewardsRef.current = new Set();
     // Restoring the id counters is essential, not optional — without this, a fresh
     // session would start both counters back at their defaults and the next new NPC,
     // location, or item would collide with an id that already exists.
@@ -2732,6 +2741,13 @@ export default function DMMemoryTest() {
           const npcId = event.npcId && worldState.npcs.some((npc) => npc.id === event.npcId) ? event.npcId : null;
           setPendingSkillCheck({ checkType: event.checkType, npcId });
         }
+      } else if (event.type === "dialogue_offer") {
+        const npc = worldState.npcs.find((entry) => entry.id === event.npcId);
+        const choices = Array.isArray(event.choices) ? event.choices : [];
+        if (npc && visibleDialogueChoices(npc, choices).length) {
+          setDialogueOffer({ npcId: npc.id, choices });
+          dialogueRewardsRef.current = new Set();
+        }
       }
     });
   }
@@ -2887,7 +2903,7 @@ export default function DMMemoryTest() {
             };
           } else {
             const newId = `npc_${nextNpcIdRef.current++}`;
-            next.npcs.push({
+            next.npcs.push(withDialogueDefaults({
               id: newId,
               name: npc.name,
               memory: npc.memory,
@@ -2904,7 +2920,7 @@ export default function DMMemoryTest() {
               trainableStats: validTrainableStats(npc.trainableStats),
               trustRequired: Number.isFinite(Number(npc.trustRequired)) ? Math.floor(Number(npc.trustRequired)) : 0,
               taughtOut: {},
-            });
+            }));
           }
         });
 
@@ -2916,7 +2932,7 @@ export default function DMMemoryTest() {
           }
           const validTraits = Array.isArray(update.traits) ? update.traits.filter((t) => NPC_TRAITS.includes(t)) : null;
           const trainerStats = validTrainableStats(update.trainableStats);
-          next.npcs[idx] = {
+          next.npcs[idx] = withDialogueDefaults({
             ...next.npcs[idx],
             ...(update.name ? { name: update.name } : {}),
             ...(update.memory ? { memory: update.memory } : {}),
@@ -2927,7 +2943,7 @@ export default function DMMemoryTest() {
             ...(update.trainerSubtype === "deepsinger" ? { trainerSubtype: "deepsinger" } : {}),
             ...(trainerStats.length ? { trainableStats: trainerStats } : {}),
             ...(Number.isFinite(Number(update.trustRequired)) ? { trustRequired: Math.floor(Number(update.trustRequired)) } : {}),
-          };
+          });
         });
 
         return next;
@@ -2947,6 +2963,73 @@ export default function DMMemoryTest() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function chooseDialogue(choice) {
+    if (!dialogueOffer || actionsDisabled) return;
+    const npc = worldState.npcs.find((entry) => entry.id === dialogueOffer.npcId);
+    if (!npc || !visibleDialogueChoices(npc, dialogueOffer.choices).includes(choice)) return;
+
+    const dispositionBefore = getDisposition(npc);
+    const check = choice.statCheck;
+    const passed = check ? Math.random() * 100 < clamp(Number(check.chance) || 0, 0, 100) : true;
+    const override = npc.dispositionOverrides?.[choice.tag];
+    const escalates = dispositionBefore === "Hostile" && !override
+      && (choice.tag === "Aggressive" || choice.tag === "Suspicious" || (check && !passed));
+
+    setDialogueOffer(null);
+    if (check) pushSystemLine(rollSegments(`${choice.tag} dialogue check (${clamp(Number(check.chance) || 0, 0, 100)}%): `, check.chance, passed));
+
+    if (escalates) {
+      if (npc.escalationBehavior === "attack") {
+        const enemyDef = ENEMY_TABLE.bandit;
+        setCombat({ enemyType: "bandit", enemy: { name: npc.name, hp: enemyDef.hp, maxHp: enemyDef.hp, attack: enemyDef.attack, defense: enemyDef.defense }, npcId: npc.id, severity: severityFor(enemyDef), threatScore: threatScoreFor(enemyDef), secondWindUsed: false, openingStrikeUsed: false, guardUpUsed: false, oathStrikeUsed: false, warriorSecondWindUsed: false, unbroken: false });
+        pushSystemLine(`⚔ ${npc.name} turns the confrontation violent.`);
+      } else if (npc.escalationBehavior === "flee_and_report") {
+        setWorldState((current) => ({ ...current, worldFacts: [...current.worldFacts, `Witnessed incident: ${npc.name} fled to report the player's hostile conduct.`] }));
+        pushSystemLine(`⚑ ${npc.name} flees to report the witnessed incident.`);
+      } else {
+        pushSystemLine(`${npc.name} shuts down the conversation and refuses further interaction this scene.`);
+      }
+      return;
+    }
+
+    const effect = override || (check
+      ? { axis: passed ? check.axisSuccess : check.axisFail, trf: passed ? check.trfSuccess : check.trfFail }
+      : { axis: choice.axis, trf: choice.trf });
+    const axisDelta = effect.axis || {};
+    const trfDelta = effect.trf || {};
+    const projectedTrust = clamp((Number(npc.trust) || 0) + (Number(trfDelta.trust) || 0), -100, 100);
+    const crossedDevoted = (Number(npc.trust) || 0) < npc.devotedThreshold && projectedTrust >= npc.devotedThreshold;
+    const reward = crossedDevoted && !dialogueRewardsRef.current.has(npc.id) && npc.rewardTable.length
+      ? (npc.rewardTable.find((item) => item.minorOrMajor === "major") || npc.rewardTable[0])
+      : null;
+    if (reward) dialogueRewardsRef.current.add(npc.id);
+    setWorldState((current) => ({
+      ...current,
+      npcs: current.npcs.map((entry) => {
+        if (entry.id !== npc.id) return entry;
+        const oldTrust = Number(entry.trust) || 0;
+        const nextTrust = clamp(oldTrust + (Number(trfDelta.trust) || 0), -100, 100);
+        const updated = {
+          ...entry,
+          personalAxes: clampPersonalAxes(entry.personalAxes, axisDelta),
+          trust: nextTrust,
+          respect: clamp((Number(entry.respect) || 0) + (Number(trfDelta.respect) || 0), -100, 100),
+          fear: clamp((Number(entry.fear) || 0) + (Number(trfDelta.fear) || 0), -100, 100),
+        };
+        return updated;
+      }),
+    }));
+    if (choice.significant && npc.factionId) {
+      const factionDelta = factionDeltaFor(axisDelta, npc.influenceWeight);
+      setCharacter((current) => ({ ...current, factionReputation: adjustFactionReputation(npc.factionId, factionDelta, current.factionReputation) }));
+      pushSystemLine(`House Voss reputation ${factionDelta >= 0 ? "+" : ""}${factionDelta}.`);
+    }
+    window.setTimeout(() => {
+      if (reward) setLog((current) => [...current, { role: "dm", narration: reward.content, suggestedActions: null, interactionType: "standard" }]);
+      submitAction(choice.text);
+    }, 0);
   }
 
   async function handleCombatAction(actionType) {
@@ -3231,6 +3314,7 @@ export default function DMMemoryTest() {
   const pendingRankChoice = pendingWarriorChoice(character);
   const shopNpc = shop ? worldState.npcs.find((n) => n.id === shop.npcId) : null;
   const trainingNpc = trainingOffer ? worldState.npcs.find((n) => n.id === trainingOffer.npcId) : null;
+  const dialogueNpc = dialogueOffer ? worldState.npcs.find((n) => n.id === dialogueOffer.npcId) : null;
 
   return (
     <>
@@ -3395,6 +3479,23 @@ export default function DMMemoryTest() {
               </div>
             );
           })}
+
+          {dialogueOffer && dialogueNpc && (
+            <div role="dialog" aria-label={`Dialogue with ${dialogueNpc.name}`} style={{ margin: "20px 0", padding: "16px", border: `1px solid ${AMBER}`, background: "#17130F", borderRadius: "3px" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px", marginBottom: "12px" }}>
+                <strong style={{ color: AMBER, fontFamily: DISPLAY_FONT }}>{dialogueNpc.name}</strong>
+                <span style={{ color: getDisposition(dialogueNpc) === "Hostile" ? WOUND : CODE_VOICE, border: "1px solid currentColor", borderRadius: "999px", padding: "2px 8px", fontFamily: DISPLAY_FONT, fontSize: "10px", textTransform: "uppercase" }}>{getDisposition(dialogueNpc)}</span>
+              </div>
+              <div style={{ display: "grid", gap: "8px" }}>
+                {visibleDialogueChoices(dialogueNpc, dialogueOffer.choices).map((choice, index) => (
+                  <button key={`${choice.tag}-${index}`} onClick={() => chooseDialogue(choice)} disabled={actionsDisabled} style={{ display: "flex", alignItems: "center", gap: "9px", textAlign: "left", padding: "9px 11px", background: "#241D15", border: "1px solid #4A3F2C", color: INK, cursor: actionsDisabled ? "default" : "pointer", opacity: actionsDisabled ? .5 : 1 }}>
+                    <span style={{ flex: "0 0 auto", color: TONE_COLORS[choice.tag], border: "1px solid currentColor", borderRadius: "999px", padding: "2px 7px", fontFamily: DISPLAY_FONT, fontSize: "9px", letterSpacing: ".04em", textTransform: "uppercase" }}>{choice.tag}{choice.statCheck ? ` · ${clamp(Number(choice.statCheck.chance) || 0, 0, 100)}%` : ""}</span>
+                    <span>{choice.text}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {combat && (
             <div style={{ margin: "20px 0", padding: "16px", border: `2px solid ${BLOOD}`, background: "linear-gradient(180deg, #2A1A1A 0%, #1C1210 100%)", boxShadow: "inset 0 0 24px rgba(0,0,0,0.5)", borderRadius: "3px" }}>
