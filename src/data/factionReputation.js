@@ -36,7 +36,7 @@ export function seedFactionReputation(homeRegion, homeFactionId = FACTIONS_BY_RE
     if (homeFactionId === first) reputation[second] -= penalty;
     else if (homeFactionId === second) reputation[first] -= penalty;
   });
-  // EXTENSION POINT: future backstory/Formative-Memory choices may nudge individual factions here.
+  // EXTENSION POINT: future Formative-Memory choices may nudge individual factions here.
   return reputation;
 }
 

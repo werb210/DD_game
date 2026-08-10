@@ -517,8 +517,36 @@ const RACE_OPTIONS = [
   { key: "dwarf", label: "Dwarf", flavor: "Stout and stubborn, dwarves are built for endurance and rarely back down once committed." },
   { key: "orc", label: "Orc", flavor: "Physically formidable, orcs are frequently misjudged as brutish by people who've never actually met one." },
   { key: "halfling", label: "Halfling", flavor: "Small, quick, and easy to overlook — which suits most halflings just fine." },
-  { key: "tiefling", label: "Tiefling", flavor: "Marked by an otherworldly heritage, tieflings are used to being stared at first and judged second." },
+  { key: "tiefling", label: "Dragonborn", flavor: "Marked by draconic heritage, dragonborn are used to being stared at first and judged second." },
 ];
+
+const HEIGHT_RANGES = {
+  human: [60, 78],
+  elf: [62, 72],
+  dwarf: [48, 58],
+  orc: [68, 84],
+  halfling: [36, 44],
+  tiefling: [66, 84],
+};
+const BUILD_OPTIONS = ["Slender", "Average", "Muscular", "Heavy"];
+const EYE_COLOR_OPTIONS = ["Brown", "Blue", "Green", "Grey", "Amber", "Hazel"];
+const HAIR_COLOR_OPTIONS = ["Black", "Brown", "Blonde", "Red", "Grey/White"];
+
+function formatHeight(heightInches) {
+  return `${Math.floor(heightInches / 12)}'${heightInches % 12}\"`;
+}
+
+function formatAppearance(appearance) {
+  if (!appearance || typeof appearance !== "object") return "";
+  const details = [
+    Number.isFinite(appearance.heightInches) ? `Height: ${formatHeight(appearance.heightInches)}` : null,
+    appearance.build ? `Build: ${appearance.build}` : null,
+    appearance.eyeColor ? `Eyes: ${appearance.eyeColor}` : null,
+    appearance.hairColor ? `Hair: ${appearance.hairColor}` : null,
+    appearance.distinguishingFeatures ? `Distinguishing features: ${appearance.distinguishingFeatures}` : null,
+  ];
+  return details.filter(Boolean).join(" · ");
+}
 
 // ---- Fixed world canon. These ids, routes, cultures, and danger tiers exist before
 // character creation and are never authored by the narrator. loc_1 deliberately remains
@@ -956,7 +984,7 @@ const initialCharacter = {
   level: 1,
   hp: 30,
   attributes: { ...initialAttributes },
-  identity: null, // { name, race, background, backstory, gender, age, appearance, weapon, voice } — set once at character creation
+  identity: null, // { name, race, background, gender, age, appearance, weapon, voice } — set once at character creation
   traits: null, // hidden formative-memory narrative context; never used as a mechanical gate
   formativeAnswers: null,
   gold: 10,
@@ -1047,16 +1075,14 @@ function craftFallbackOpeningNarration(identity, startingRegion = "heartlands") 
   const race = RACE_OPTIONS.find((r) => r.key === identity.race) || RACE_OPTIONS[0];
   const background = BACKGROUND_OPTIONS[identity.background] || BACKGROUND_OPTIONS.farmer;
   const weapon = STARTING_WEAPON_OPTIONS[identity.weapon] || STARTING_WEAPON_OPTIONS.dagger;
-  const backstoryLine = identity.backstory && identity.backstory.trim()
-    ? identity.backstory.trim()
-    : "Whatever brought you here, you've kept it to yourself.";
-  const appearanceLine = identity.appearance && identity.appearance.trim() ? ` ${identity.appearance.trim()}` : "";
+  const appearanceText = formatAppearance(identity.appearance);
+  const appearanceLine = appearanceText ? ` ${appearanceText}.` : "";
   const region = REGIONS_TABLE[startingRegion] || REGIONS_TABLE.heartlands;
   const locationName = WORLD_MAP[region.hubSettlement].name;
   const anchor = OPENING_TONAL_ANCHORS[startingRegion] || OPENING_TONAL_ANCHORS.heartlands;
   const narration = startingRegion === "heartlands"
-    ? `Rain taps the shutters of the Crossroads Inn. ${identity.name}, a ${race.label.toLowerCase()} formerly a ${background.label.toLowerCase()}, has just arrived in Millbrook, a farming village that smells of woodsmoke and wet hay, a ${weapon.name.toLowerCase()} at your side.${appearanceLine} ${backstoryLine} The innkeeper eyes you — a stranger — while three locals mutter over their ale in the corner.`
-    : `${identity.name}, a ${race.label.toLowerCase()} formerly a ${background.label.toLowerCase()}, begins this road in ${locationName}, the hub of the ${region.displayName.toLowerCase()}, a ${weapon.name.toLowerCase()} at your side.${appearanceLine} ${backstoryLine} ${anchor}`;
+    ? `Rain taps the shutters of the Crossroads Inn. ${identity.name}, a ${race.label.toLowerCase()} formerly a ${background.label.toLowerCase()}, has just arrived in Millbrook, a farming village that smells of woodsmoke and wet hay, a ${weapon.name.toLowerCase()} at your side.${appearanceLine} The innkeeper eyes you — a stranger — while three locals mutter over their ale in the corner.`
+    : `${identity.name}, a ${race.label.toLowerCase()} formerly a ${background.label.toLowerCase()}, begins this road in ${locationName}, the hub of the ${region.displayName.toLowerCase()}, a ${weapon.name.toLowerCase()} at your side.${appearanceLine} ${anchor}`;
   return {
     role: "dm",
     narration,
@@ -1226,7 +1252,7 @@ You'll receive the current WORLD STATE, CHARACTER SUMMARY (level/rough HP status
 
 If CHARACTER SUMMARY includes "notableTraits" (e.g. "Strength: Skilled"), feel free to let those color your narration when relevant — a strong character might force a door, a perceptive one might notice something others miss — but never state the underlying number, and never let a trait's absence mean the player categorically fails at something; these are flavor, not hard gates. The same goes for "narrativeAbilities" (e.g. "Keen Analysis: You notice details others miss") — weave them in when they fit the scene, but they're color, not permission or denial for anything mechanical.
 
-CHARACTER SUMMARY also includes "name", "race", "background", "backgroundNote", "gender", "age", "appearance", "voice", and "backstory". Use the player's name naturally sometimes (NPCs addressing them, narration referencing them) — but don't force it into every paragraph, and second person ("you") is still your default voice. Race, background, gender, age, and appearance are flavor for physical description and reputation, never a mechanical gate (an Elf isn't secretly better at anything the numbers don't already say, and a Noble isn't guaranteed a warm welcome everywhere). "backgroundNote" is a recognition cue (e.g. a Farmer's "villagers warm to you quickly") — let it surface when a scene plausibly involves people who'd notice, not every scene. "voice" (e.g. "Rough", "Noble") should color how the player's own manner and implied dialogue read, not how NPCs speak. Treat "backstory" as established, private history — you can have it surface in the world (a stranger who recognizes something about them, a rumor that fits) but never contradict it, and never expose details the player hasn't chosen to share in-fiction just because you know them.
+CHARACTER SUMMARY also includes "name", "race", "background", "backgroundNote", "gender", "age", "appearance", and "voice". Use the player's name naturally sometimes (NPCs addressing them, narration referencing them) — but don't force it into every paragraph, and second person ("you") is still your default voice. Race, background, gender, age, and appearance are flavor for physical description and reputation, never a mechanical gate (an Elf isn't secretly better at anything the numbers don't already say, and a Noble isn't guaranteed a warm welcome everywhere). "backgroundNote" is a recognition cue (e.g. a Farmer's "villagers warm to you quickly") — let it surface when a scene plausibly involves people who'd notice, not every scene. "voice" (e.g. "Rough", "Noble") should color how the player's own manner and implied dialogue read, not how NPCs speak.
 
 "formativeTraits" and "formativeAnswers" describe private memories and instinctive tendencies. Let them subtly color reactions and narration, but never mention their numbers, reveal the answers as a ledger, restrict or remove suggested actions, or treat them as mechanical permission, success, or failure.
 
@@ -1819,7 +1845,6 @@ function characterSummaryForPrompt(character, quests) {
     age: character.identity?.age || null,
     appearance: character.identity?.appearance || null,
     voice: character.identity?.voice || null,
-    backstory: character.identity?.backstory || null,
     formativeTraits: character.traits || null,
     formativeAnswers: character.formativeAnswers || null,
     startingRegion: character.startingRegion || null,
@@ -2260,7 +2285,7 @@ export default function DMMemoryTest() {
   }
 
   function submitIdentity(identity) {
-    const { traits, formativeAnswers, ...identityDetails } = identity;
+    const { traits, formativeAnswers, occupation, ...identityDetails } = identity;
     if (identityMode === "new") {
       const startingRegion = rollStartingRegion(identityDetails.race);
       const regionalPassive = { ...REGIONS_TABLE[startingRegion].passiveAbility };
@@ -2273,7 +2298,8 @@ export default function DMMemoryTest() {
       });
       const startingGold = 10 + (background.startingGold || 0);
       const startingInventory = buildStartingInventory(identityDetails.weapon, identityDetails.background);
-      const openingCharacter = { ...initialCharacter, attributes: startingAttributes, gold: startingGold, inventory: startingInventory, identity: identityWithRegion, traits, formativeAnswers, startingRegion, regionalPassive, factionReputation: seedFactionReputation(startingRegion, identityDetails.homeFactionId) };
+      const primaryOccupation = { id: occupation, rank: 1, xp: 0 };
+      const openingCharacter = { ...initialCharacter, attributes: startingAttributes, gold: startingGold, inventory: startingInventory, identity: identityWithRegion, traits, formativeAnswers, startingRegion, regionalPassive, factionReputation: seedFactionReputation(startingRegion, identityDetails.homeFactionId), occupations: { primary: primaryOccupation, secondary: null, tertiary: null }, occupationAbilities: occupation === "warrior" ? ["brace"] : [] };
       const startingLocationId = REGIONS_TABLE[startingRegion].hubSettlement;
       const openingWorldState = { ...initialWorldState, day: 1, locationId: startingLocationId, zoneId: defaultZoneForLocation(startingLocationId), locations: cloneWorldMap(startingLocationId) };
       setCharacter(openingCharacter);
@@ -2297,7 +2323,7 @@ export default function DMMemoryTest() {
         })
         .finally(() => setLoading(false));
     } else {
-      setCharacter((c) => ({ ...c, identity: identityDetails, traits, formativeAnswers }));
+      setCharacter((c) => ({ ...c, identity: identityDetails, traits, formativeAnswers, occupations: { ...c.occupations, primary: { id: occupation, rank: 1, xp: 0 } }, occupationAbilities: occupation === "warrior" ? [...new Set([...(c.occupationAbilities || []), "brace"])] : (c.occupationAbilities || []).filter((ability) => ability !== "brace") }));
       pushSystemLine(`✎ ${identityDetails.name} — the story continues.`);
     }
     setNeedsIdentity(false);
@@ -3731,13 +3757,12 @@ export default function DMMemoryTest() {
         {ledgerTab === "character" && <>
           {character.identity && <LedgerSection title="Identity">
             <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
-              <PixelSprite src={RACE_SPRITES[character.identity.race] || RACE_SPRITES.human} alt={`${character.identity.race} character sprite`} size={64} style={{ background: "#0e0c09", border: "1px solid #33291D" }} />
+              <PixelSprite src={RACE_SPRITES[character.identity.race] || RACE_SPRITES.human} alt={`${RACE_OPTIONS.find((r) => r.key === character.identity.race)?.label || "Human"} character sprite`} size={64} style={{ background: "#0e0c09", border: "1px solid #33291D" }} />
               <div><div style={{ color: AMBER, fontFamily: DISPLAY_FONT, fontSize: "13px" }}>{character.identity.name}</div><div style={{ color: SLATE, fontSize: "11px" }}>{RACE_OPTIONS.find((r) => r.key === character.identity.race)?.label || character.identity.race} · {BACKGROUND_OPTIONS[character.identity.background]?.label || character.identity.background}</div></div>
             </div>
             {character.identity.voice && <div style={{ color: SLATE, marginTop: "5px" }}>Voice: {character.identity.voice}</div>}
             {character.regionalPassive && <div style={{ color: CODE_VOICE, marginTop: "7px", lineHeight: 1.5 }}>Regional Passive — {character.regionalPassive.key}: {character.regionalPassive.description}</div>}
-            {character.identity.appearance && <div style={{ color: SLATE, marginTop: "6px", lineHeight: 1.5 }}>{character.identity.appearance}</div>}
-            {character.identity.backstory && <div style={{ color: SLATE, marginTop: "6px", fontStyle: "italic", lineHeight: 1.5 }}>{character.identity.backstory}</div>}
+            {formatAppearance(character.identity.appearance) && <div style={{ color: SLATE, marginTop: "6px", lineHeight: 1.5 }}>{formatAppearance(character.identity.appearance)}</div>}
           </LedgerSection>}
           <LedgerSection title="Stats & Resources">
             <div style={{ color: character.hp <= characterEffStats.maxHp * .3 ? WOUND : INK }}>HP {character.hp}/{characterEffStats.maxHp}</div><StatBar value={character.hp} max={characterEffStats.maxHp} color={BLOOD} />
@@ -3752,7 +3777,7 @@ export default function DMMemoryTest() {
 
         {ledgerTab === "skills" && <>
         <LedgerSection title="Occupations">
-          {['primary', 'secondary', 'tertiary'].map((slot) => { const occupation = character.occupations?.[slot]; const unlocked = slotIsUnlocked(character, slot); if (!occupation) return <div key={slot} style={{ opacity: unlocked ? 1 : .45, border: `1px solid ${DIM}`, padding: '10px', marginBottom: '8px' }}><div style={{ color: unlocked ? AMBER : DIM, textTransform: 'capitalize' }}>{slot} — {unlocked ? 'Choose occupation' : 'Locked'}</div>{!unlocked && <div style={{ color: SLATE, fontSize: '10px' }}>{slot === 'secondary' ? 'Unlocks at Primary Rank 3' : 'Unlocks at Primary Rank 4 and Secondary Rank 2'}</div>}{unlocked && AVAILABLE_OCCUPATIONS.map((entry) => <button key={entry.id} onClick={() => selectOccupation(slot, entry.id)} style={{ marginTop: '7px', background: '#211B14', border: `1px solid ${AMBER}`, color: INK }}>{entry.name}</button>)}</div>; const nextThreshold = WARRIOR_THRESHOLDS[Math.min(4, occupation.rank + 1)]; const previous = occupation.rank === 1 ? 0 : WARRIOR_THRESHOLDS[occupation.rank]; return <div key={slot} style={{ border: `1px solid ${AMBER}`, padding: '10px', marginBottom: '8px' }}><div style={{ color: AMBER, textTransform: 'capitalize' }}>{slot}: Warrior — Rank {occupation.rank}: {WARRIOR_TITLES[occupation.rank]}</div>{occupation.rank < 4 ? <><div style={{ color: SLATE, fontSize: '10px', marginTop: '6px' }}>{occupation.xp.toFixed(1)} / {nextThreshold} occupation XP</div><StatBar value={occupation.xp - previous} max={nextThreshold - previous} color={CODE_VOICE} height={5} /></> : <div style={{ color: CODE_VOICE }}>Maximum rank · {occupation.xp.toFixed(1)} XP</div>}{[2,3,4].map((rank) => { const chosen = character.warriorChoices?.[`rank${rank}`]; const path = WARRIOR_PATHS[rank]?.[chosen]; return path ? <div key={rank} style={{ marginTop: '8px', color: INK }}><b>Rank {rank} — {path.name}</b><div style={{ color: CODE_VOICE }}>{path.active}</div><div style={{ color: SLATE }}>{path.passive} ({Math.round(SLOT_SCALING[slot] * 100)}% slot effectiveness)</div></div> : null; })}</div>; })}
+          {['primary', 'secondary', 'tertiary'].map((slot) => { const occupation = character.occupations?.[slot]; const unlocked = slotIsUnlocked(character, slot); if (!occupation) return <div key={slot} style={{ opacity: unlocked ? 1 : .45, border: `1px solid ${DIM}`, padding: '10px', marginBottom: '8px' }}><div style={{ color: unlocked ? AMBER : DIM, textTransform: 'capitalize' }}>{slot} — {unlocked ? 'Choose occupation' : 'Locked'}</div>{!unlocked && <div style={{ color: SLATE, fontSize: '10px' }}>{slot === 'secondary' ? 'Unlocks at Primary Rank 3' : 'Unlocks at Primary Rank 4 and Secondary Rank 2'}</div>}{unlocked && AVAILABLE_OCCUPATIONS.map((entry) => <button key={entry.id} onClick={() => selectOccupation(slot, entry.id)} style={{ marginTop: '7px', background: '#211B14', border: `1px solid ${AMBER}`, color: INK }}>{entry.name}</button>)}</div>; const definition = AVAILABLE_OCCUPATIONS.find((entry) => entry.id === occupation.id); if (occupation.id !== 'warrior') return <div key={slot} style={{ border: `1px solid ${AMBER}`, padding: '10px', marginBottom: '8px' }}><div style={{ color: AMBER, textTransform: 'capitalize' }}>{slot}: {definition?.name || occupation.id} — Rank {occupation.rank}: {definition?.rankOneTitle}</div><div style={{ color: SLATE, fontSize: '10px', marginTop: '6px' }}>{occupation.xp.toFixed(1)} occupation XP</div></div>; const nextThreshold = WARRIOR_THRESHOLDS[Math.min(4, occupation.rank + 1)]; const previous = occupation.rank === 1 ? 0 : WARRIOR_THRESHOLDS[occupation.rank]; return <div key={slot} style={{ border: `1px solid ${AMBER}`, padding: '10px', marginBottom: '8px' }}><div style={{ color: AMBER, textTransform: 'capitalize' }}>{slot}: Warrior — Rank {occupation.rank}: {WARRIOR_TITLES[occupation.rank]}</div>{occupation.rank < 4 ? <><div style={{ color: SLATE, fontSize: '10px', marginTop: '6px' }}>{occupation.xp.toFixed(1)} / {nextThreshold} occupation XP</div><StatBar value={occupation.xp - previous} max={nextThreshold - previous} color={CODE_VOICE} height={5} /></> : <div style={{ color: CODE_VOICE }}>Maximum rank · {occupation.xp.toFixed(1)} XP</div>}{[2,3,4].map((rank) => { const chosen = character.warriorChoices?.[`rank${rank}`]; const path = WARRIOR_PATHS[rank]?.[chosen]; return path ? <div key={rank} style={{ marginTop: '8px', color: INK }}><b>Rank {rank} — {path.name}</b><div style={{ color: CODE_VOICE }}>{path.active}</div><div style={{ color: SLATE }}>{path.passive} ({Math.round(SLOT_SCALING[slot] * 100)}% slot effectiveness)</div></div> : null; })}</div>; })}
           <div style={{ color: SLATE, fontSize: '10px' }}>Moves: {availableWeaponMoves(character).join(', ')}</div>
         </LedgerSection>
         <LedgerSection title={`Abilities (${characterEffStats.abilities.length}/${Object.values(ABILITY_TABLE).flat().length})`}>
@@ -3792,27 +3817,34 @@ export default function DMMemoryTest() {
 // weapon, and voice are button grids rather than dropdowns/selects to match the rest of
 // the app's touch-first UI. Background bonus is only ever a preview here; submitIdentity
 // decides whether it's actually applied (never, in "migrate" mode — see the note below).
-// Appearance is deliberately one free-text field rather than a dozen separate pickers
-// (height/build/hair/scars/etc.) — free text covers all of that with far less UI, and
-// gives more actual expressive freedom than a fixed preset ever could.
 function CharacterCreationScreen({ mode, onSubmit }) {
   const [name, setName] = useState("");
   const [gender, setGender] = useState(null);
   const [age, setAge] = useState("");
-  const [appearance, setAppearance] = useState("");
+  const [heightInches, setHeightInches] = useState(null);
+  const [build, setBuild] = useState("Average");
+  const [eyeColor, setEyeColor] = useState("Brown");
+  const [hairColor, setHairColor] = useState("Black");
+  const [distinguishingFeatures, setDistinguishingFeatures] = useState("");
   const [race, setRace] = useState(null);
   const [background, setBackground] = useState(null);
   const [formativeSelections, setFormativeSelections] = useState({});
   const [weapon, setWeapon] = useState("dagger");
   const [voice, setVoice] = useState(null);
-  const [backstory, setBackstory] = useState("");
+  const [occupation, setOccupation] = useState(null);
 
   const allMemoriesAnswered = FORMATIVE_MEMORY_QUESTIONS.every((question) => formativeSelections[question.id] !== undefined);
-  const canSubmit = name.trim().length > 0 && race && background && allMemoriesAnswered;
+  const canSubmit = name.trim().length > 0 && race && heightInches !== null && background && occupation && allMemoriesAnswered;
   const GENDER_OPTIONS = ["Male", "Female", "Nonbinary", "Prefer not to say"];
   const raceBonus = RACE_STAT_BONUS_TABLE[race] || {};
   const backgroundBonus = background ? (BACKGROUND_STAT_BONUS_TABLE[background] || BACKGROUND_OPTIONS[background]?.bonus || {}) : {};
   const previewBonus = combinedStatBonus(raceBonus, backgroundBonus);
+  const heightRange = race ? HEIGHT_RANGES[race] : null;
+
+  useEffect(() => {
+    if (!heightRange) return;
+    setHeightInches((current) => current === null ? heightRange[0] : clamp(current, heightRange[0], heightRange[1]));
+  }, [race]);
 
   function fieldLabel(text) {
     return (
@@ -3887,22 +3919,33 @@ function CharacterCreationScreen({ mode, onSubmit }) {
         </div>
 
         <div style={{ marginBottom: "22px" }}>
-          {fieldLabel("Appearance (optional)")}
-          <textarea
-            value={appearance}
-            onChange={(e) => setAppearance(e.target.value)}
-            placeholder="Height, build, hair, eyes, scars, tattoos, clothing — whatever matters to you. Leave blank and it's left to the imagination."
-            rows={2}
-            style={{ width: "100%", background: "#1A1611", border: "1px solid #33291D", color: INK, padding: "10px 12px", fontFamily: BODY_FONT, fontSize: "14px", outline: "none", borderRadius: "2px", resize: "vertical", boxSizing: "border-box" }}
-          />
-        </div>
-
-        <div style={{ marginBottom: "22px" }}>
           {fieldLabel("Race")}
           <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
             {RACE_OPTIONS.map(raceButton)}
           </div>
           {race && <p style={{ color: SLATE, fontSize: "11.5px", marginTop: "8px", lineHeight: 1.5 }}>{RACE_OPTIONS.find((r) => r.key === race).flavor} <span style={{ color: CODE_VOICE }}>Race bonus: {statBonusText(raceBonus)}</span></p>}
+        </div>
+
+        <div style={{ marginBottom: "22px" }}>
+          {fieldLabel("Appearance")}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "10px" }}>
+            <label style={{ color: SLATE, fontSize: "11px" }}>Height
+              <select aria-label="Height" value={heightInches ?? ""} disabled={!race} onChange={(e) => setHeightInches(Number(e.target.value))} style={{ width: "100%", marginTop: "5px", background: "#1A1611", border: "1px solid #33291D", color: INK, padding: "9px", boxSizing: "border-box" }}>
+                {!race && <option value="">Select race first</option>}
+                {heightRange && Array.from({ length: heightRange[1] - heightRange[0] + 1 }, (_, i) => heightRange[0] + i).map((height) => <option key={height} value={height}>{formatHeight(height)}</option>)}
+              </select>
+            </label>
+            {[["Build", build, setBuild, BUILD_OPTIONS], ["Eye Color", eyeColor, setEyeColor, EYE_COLOR_OPTIONS], ["Hair Color", hairColor, setHairColor, HAIR_COLOR_OPTIONS]].map(([label, value, setter, options]) => (
+              <label key={label} style={{ color: SLATE, fontSize: "11px" }}>{label}
+                <select aria-label={label} value={value} onChange={(e) => setter(e.target.value)} style={{ width: "100%", marginTop: "5px", background: "#1A1611", border: "1px solid #33291D", color: INK, padding: "9px", boxSizing: "border-box" }}>
+                  {options.map((option) => <option key={option} value={option}>{option}</option>)}
+                </select>
+              </label>
+            ))}
+          </div>
+          <label style={{ display: "block", color: SLATE, fontSize: "11px", marginTop: "10px" }}>Distinguishing Features (optional)
+            <input value={distinguishingFeatures} maxLength={120} onChange={(e) => setDistinguishingFeatures(e.target.value)} placeholder="Scars, tattoos, or other notable details" style={{ width: "100%", marginTop: "5px", background: "#1A1611", border: "1px solid #33291D", color: INK, padding: "10px 12px", fontFamily: BODY_FONT, fontSize: "14px", outline: "none", borderRadius: "2px", boxSizing: "border-box" }} />
+          </label>
         </div>
 
         <div style={{ marginBottom: "22px" }}>
@@ -3971,14 +4014,10 @@ function CharacterCreationScreen({ mode, onSubmit }) {
         </div>
 
         <div style={{ marginBottom: "28px" }}>
-          {fieldLabel("Backstory (optional)")}
-          <textarea
-            value={backstory}
-            onChange={(e) => setBackstory(e.target.value)}
-            placeholder="A sentence or two about who you were before this — leave blank to keep it a mystery."
-            rows={3}
-            style={{ width: "100%", background: "#1A1611", border: "1px solid #33291D", color: INK, padding: "10px 12px", fontFamily: BODY_FONT, fontSize: "14px", outline: "none", borderRadius: "2px", resize: "vertical", boxSizing: "border-box" }}
-          />
+          {fieldLabel("Primary Occupation")}
+          <div style={{ display: "grid", gap: "8px" }}>
+            {AVAILABLE_OCCUPATIONS.map((entry) => pillButton(entry.id, <div><div>{entry.name} — {entry.rankOneTitle}</div><div style={{ color: SLATE, fontFamily: BODY_FONT, fontSize: "11px", marginTop: "4px", lineHeight: 1.45 }}>{entry.description}</div></div>, occupation === entry.id, () => setOccupation(entry.id)))}
+          </div>
         </div>
 
         <button
@@ -3989,7 +4028,7 @@ function CharacterCreationScreen({ mode, onSubmit }) {
               Object.entries(option.traits).forEach(([trait, amount]) => { traits[trait] += amount; });
               return option.label;
             });
-            onSubmit({ name: name.trim(), gender, age: age.trim(), appearance: appearance.trim(), race, background, weapon, voice, backstory: backstory.trim(), traits, formativeAnswers });
+            onSubmit({ name: name.trim(), gender, age: age.trim(), appearance: { heightInches, build, eyeColor, hairColor, distinguishingFeatures: distinguishingFeatures.trim() }, race, background, weapon, voice, occupation, traits, formativeAnswers });
           }}
           disabled={!canSubmit}
           style={{ background: canSubmit ? `linear-gradient(180deg, ${BLOOD} 0%, #4A1620 100%)` : "transparent", border: `1px solid ${canSubmit ? BLOOD : "#4A3F2C"}`, color: canSubmit ? INK : DIM, padding: "12px 24px", fontFamily: DISPLAY_FONT, fontSize: "13px", letterSpacing: "0.05em", textTransform: "uppercase", cursor: canSubmit ? "pointer" : "default", borderRadius: "2px", width: "100%" }}

@@ -18,7 +18,13 @@ export const WARRIOR_PATHS = {
   },
 };
 
-export const AVAILABLE_OCCUPATIONS = [{ id: "warrior", name: "Warrior", description: "A weapon master who thrives through direct combat." }];
+export const AVAILABLE_OCCUPATIONS = [
+  { id: "warrior", name: "Warrior", rankOneTitle: "Vagrant", description: "You've picked up a blade because you had to, not because anyone taught you properly. Not yet." },
+  { id: "arcanist", name: "Arcanist", rankOneTitle: "Hedge Wizard", description: "Half-understood theory, self-taught, more dangerous to yourself than anyone else. For now." },
+  { id: "tracker", name: "Tracker", rankOneTitle: "Vagabond", description: "You've learned to move without being seen more out of necessity than skill." },
+  { id: "fixer", name: "Fixer", rankOneTitle: "Runner", description: "You carry messages, favors, and secrets for people who'd rather not be seen carrying them themselves." },
+  { id: "paladin", name: "Paladin", rankOneTitle: "Zealot", description: "Conviction without training — dangerous in its own way." },
+];
 
 export function freshWarrior(rank = 1, xp = 0) { return { id: "warrior", rank, xp }; }
 export function freshWarriorChoices() { return { rank2: null, rank3: null, rank4: null }; }
