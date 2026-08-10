@@ -32,6 +32,7 @@ import innLocation from './assets/loc_inn.png';
 import villageLocation from './assets/loc_village.png';
 import { LORE_DATA } from './LORE_DATA.js';
 import { WORLD_LORE } from './WORLD_LORE.js';
+import { DEFAULT_ZONE_BY_LOCATION, ZONES, zonesForLocation } from './ZONES.js';
 import { STATUS_EFFECT_TABLE } from './data/statusEffectData.js';
 import { WEAPON_ASPECT_TABLE } from './data/weaponAspectData.js';
 import { RUNE_TABLE } from './data/runeData.js';
@@ -1129,11 +1130,28 @@ const TUTORIAL_STEPS = [
 const initialWorldState = {
   day: 1,
   locationId: "loc_1",
+  zoneId: "market_square",
   locations: cloneWorldMap("loc_1"),
-  npcs: [],
+  npcs: [
+    withDialogueDefaults({ id: "npc_1", name: "Alderman Voss", roles: ["noble", "official"], memory: "Alderman of Barrow's Cross and head of House Voss." }),
+    withDialogueDefaults({ id: "npc_2", name: "Mara Tallow", roles: ["merchant"], merchantType: "general_store", memory: "Keeps the general store on Barrow's Cross market square." }),
+    withDialogueDefaults({ id: "npc_3", name: "Harl Fen", roles: ["merchant"], merchantType: "blacksmith", memory: "Works the forge at Barrow's Cross." }),
+    withDialogueDefaults({ id: "npc_4", name: "Ellyn Reed", roles: [], memory: "Keeps the inn at Barrow's Cross." }),
+  ],
   reputation: "Unknown — a stranger passing through",
   worldFacts: [],
 };
+
+// Barrow's Cross predates the descriptive world-map ids. Keep its legacy loc_1 id
+// save-compatible while zones use the stable, human-readable location id requested by
+// the zone data contract.
+function zoneLocationId(locationId) {
+  return locationId === "loc_1" ? "barrows_cross" : locationId;
+}
+
+function defaultZoneForLocation(locationId) {
+  return DEFAULT_ZONE_BY_LOCATION[zoneLocationId(locationId)] || null;
+}
 
 // ---- Deterministic combat math. No AI involved in any of this. ----
 
@@ -1841,7 +1859,7 @@ export default function DMMemoryTest() {
   // Monotonic ID counters — refs, not state, since incrementing them shouldn't itself
   // trigger a render. Code is the only thing that ever assigns an id; Claude only ever
   // receives and echoes them back (for npc/location ids) or never sees them at all (items).
-  const nextNpcIdRef = useRef(1);
+  const nextNpcIdRef = useRef(5);
   const nextLocationIdRef = useRef(1); // disposable flavor locations use flavor_loc_N
   const nextItemIdRef = useRef(3); // item_1 and item_2 are already taken by initialCharacter
   const [log, setLog] = useState(INITIAL_LOG);
@@ -1943,13 +1961,23 @@ export default function DMMemoryTest() {
           : { ...savedLocation, discovered: savedLocation.discovered ?? true, visited: savedLocation.visited ?? true };
       });
       revealArrival(migratedLocations, savedLocationId);
-      const migratedNpcs = (saved.worldState.npcs || []).map((npc) => ({
+      const savedNpcs = (saved.worldState.npcs || []).map((npc) => ({
         ...withDialogueDefaults(npc),
         isTrainer: !!npc.isTrainer,
         trainableStats: Array.isArray(npc.trainableStats) ? npc.trainableStats : [],
         taughtOut: npc.taughtOut || {},
       }));
-      setWorldState({ day: 1, ...saved.worldState, locations: migratedLocations, npcs: migratedNpcs });
+      const migratedNpcs = initialWorldState.npcs.map((canonicalNpc) => {
+        const savedNpc = savedNpcs.find((npc) => npc.id === canonicalNpc.id || npc.name === canonicalNpc.name);
+        return savedNpc ? { ...canonicalNpc, ...savedNpc, id: canonicalNpc.id } : canonicalNpc;
+      });
+      savedNpcs.forEach((npc) => {
+        if (!migratedNpcs.some((known) => known.id === npc.id || known.name === npc.name)) migratedNpcs.push(npc);
+      });
+      const zoneId = ZONES[saved.worldState.zoneId]?.locationId === zoneLocationId(savedLocationId)
+        ? saved.worldState.zoneId
+        : defaultZoneForLocation(savedLocationId);
+      setWorldState({ day: 1, ...saved.worldState, zoneId, locations: migratedLocations, npcs: migratedNpcs });
     }
     if (saved.character) {
       // Migration: saves from before the consumables system stored inventory as a
@@ -2024,7 +2052,7 @@ export default function DMMemoryTest() {
     // Restoring the id counters is essential, not optional — without this, a fresh
     // session would start both counters back at their defaults and the next new NPC,
     // location, or item would collide with an id that already exists.
-    if (typeof saved.nextNpcId === "number") nextNpcIdRef.current = saved.nextNpcId;
+    if (typeof saved.nextNpcId === "number") nextNpcIdRef.current = Math.max(5, saved.nextNpcId);
     if (typeof saved.nextLocationId === "number") nextLocationIdRef.current = saved.nextLocationId;
     // Only trust a saved nextItemId if it's ahead of whatever the migration step above
     // may have already consumed — otherwise a save from before consumables existed
@@ -2195,7 +2223,7 @@ export default function DMMemoryTest() {
     setShop(null);
     setPendingPurchase(null);
     setLog(INITIAL_LOG);
-    nextNpcIdRef.current = 1;
+    nextNpcIdRef.current = 5;
     nextLocationIdRef.current = 1;
     nextItemIdRef.current = 3;
     setLastSavedAt(null);
@@ -2247,7 +2275,7 @@ export default function DMMemoryTest() {
       const startingInventory = buildStartingInventory(identityDetails.weapon, identityDetails.background);
       const openingCharacter = { ...initialCharacter, attributes: startingAttributes, gold: startingGold, inventory: startingInventory, identity: identityWithRegion, traits, formativeAnswers, startingRegion, regionalPassive, factionReputation: seedFactionReputation(startingRegion, identityDetails.homeFactionId) };
       const startingLocationId = REGIONS_TABLE[startingRegion].hubSettlement;
-      const openingWorldState = { ...initialWorldState, day: 1, locationId: startingLocationId, locations: cloneWorldMap(startingLocationId) };
+      const openingWorldState = { ...initialWorldState, day: 1, locationId: startingLocationId, zoneId: defaultZoneForLocation(startingLocationId), locations: cloneWorldMap(startingLocationId) };
       setCharacter(openingCharacter);
       setWorldState(openingWorldState);
       setLog([craftFallbackOpeningNarration(identityWithRegion, startingRegion)]);
@@ -2840,6 +2868,7 @@ export default function DMMemoryTest() {
         const next = {
           day: prev.day || 1,
           locationId: prev.locationId,
+          zoneId: prev.zoneId,
           locations: Object.fromEntries(Object.entries(prev.locations).map(([id, location]) => [id, { ...location, connections: [...(location.connections || [])] }])),
           npcs: [...prev.npcs],
           reputation: stateUpdates.reputationDelta ? `${prev.reputation} → ${stateUpdates.reputationDelta}` : prev.reputation,
@@ -2870,6 +2899,7 @@ export default function DMMemoryTest() {
         // was a brand-new discovery or a return to somewhere already known. This is how
         // the map graph builds itself purely from what actually happened in play.
         if (next.locationId !== prevLocationId) {
+          next.zoneId = defaultZoneForLocation(next.locationId);
           linkLocations(next.locations, prevLocationId, next.locationId);
           revealArrival(next.locations, next.locationId);
           if (WORLD_MAP[next.locationId]) {
@@ -3313,6 +3343,33 @@ export default function DMMemoryTest() {
   };
   const pendingRankChoice = pendingWarriorChoice(character);
   const shopNpc = shop ? worldState.npcs.find((n) => n.id === shop.npcId) : null;
+  const localZones = zonesForLocation(zoneLocationId(worldState.locationId));
+  const currentZone = localZones.find((zone) => zone.zoneId === worldState.zoneId)
+    || localZones.find((zone) => zone.zoneId === defaultZoneForLocation(worldState.locationId));
+  const zoneNpcs = currentZone
+    ? currentZone.npcIds.map((id) => worldState.npcs.find((npc) => npc.id === id)).filter(Boolean)
+    : [];
+
+  function walkToZone(zoneId) {
+    if (!currentZone?.exits.includes(zoneId) || ZONES[zoneId]?.locationId !== currentZone.locationId) return;
+    // Deliberately update only spatial state: local walking advances no clock and spends
+    // no Hunger or Fatigue. Future location rules can observe this transition separately.
+    setWorldState((current) => ({ ...current, zoneId }));
+  }
+
+  function triggerZoneInteractable(interactable) {
+    if (interactable.type === "merchant") {
+      const npc = worldState.npcs.find((entry) => entry.id === interactable.targetId);
+      if (npc?.merchantType) processEvents([{ type: "shop_open", id: npc.id, merchantType: npc.merchantType }]);
+    } else if (interactable.type === "rest") {
+      submitAction("Stay at the local inn and rest for the night");
+    } else if (interactable.type === "travel_exit") {
+      setMapOpen(true);
+    } else if (interactable.targetId) {
+      const npc = worldState.npcs.find((entry) => entry.id === interactable.targetId);
+      if (npc) submitAction(`Speak with ${npc.name} [npc id: ${npc.id}]`);
+    }
+  }
   const trainingNpc = trainingOffer ? worldState.npcs.find((n) => n.id === trainingOffer.npcId) : null;
   const dialogueNpc = dialogueOffer ? worldState.npcs.find((n) => n.id === dialogueOffer.npcId) : null;
 
@@ -3446,6 +3503,33 @@ export default function DMMemoryTest() {
               {worldState.locations[worldState.locationId]?.name}
             </div>
           </div>
+          {currentZone && (
+            <section aria-label="Local navigation" style={{ marginBottom: "22px", padding: "16px", border: `1px solid ${AMBER}`, background: "linear-gradient(180deg, #211B14, #17130F)", borderRadius: "3px" }}>
+              <h2 style={{ margin: 0, color: AMBER, fontFamily: DISPLAY_FONT, fontSize: "17px", letterSpacing: ".05em" }}>{currentZone.name}</h2>
+              <p style={{ margin: "7px 0 14px", color: SLATE, lineHeight: 1.55 }}>{currentZone.description}</p>
+
+              <div style={{ display: "grid", gap: "13px", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
+                <div>
+                  <div style={{ color: DIM, fontFamily: DISPLAY_FONT, fontSize: "10px", letterSpacing: ".1em", textTransform: "uppercase", marginBottom: "7px" }}>People here</div>
+                  {zoneNpcs.length ? zoneNpcs.map((npc) => (
+                    <button key={npc.id} onClick={() => submitAction(`Speak with ${npc.name} [npc id: ${npc.id}]`)} disabled={actionsDisabled || !!combat || !!shop} style={{ display: "block", width: "100%", marginBottom: "6px", padding: "8px 10px", textAlign: "left", background: "#241D15", border: "1px solid #4A3F2C", color: INK, cursor: "pointer" }}>{npc.name}</button>
+                  )) : <div style={{ color: DIM, fontSize: "12px" }}>No one is nearby.</div>}
+                </div>
+                <div>
+                  <div style={{ color: DIM, fontFamily: DISPLAY_FONT, fontSize: "10px", letterSpacing: ".1em", textTransform: "uppercase", marginBottom: "7px" }}>Interact</div>
+                  {currentZone.interactables.map((interactable) => (
+                    <button key={interactable.id} onClick={() => triggerZoneInteractable(interactable)} disabled={actionsDisabled || !!combat || !!shop} style={{ display: "block", width: "100%", marginBottom: "6px", padding: "8px 10px", textAlign: "left", background: "#241D15", border: `1px solid ${CODE_VOICE}`, color: CODE_VOICE, cursor: "pointer" }}>{interactable.label}</button>
+                  ))}
+                </div>
+                <div>
+                  <div style={{ color: DIM, fontFamily: DISPLAY_FONT, fontSize: "10px", letterSpacing: ".1em", textTransform: "uppercase", marginBottom: "7px" }}>Paths</div>
+                  {currentZone.exits.map((zoneId) => (
+                    <button key={zoneId} onClick={() => walkToZone(zoneId)} disabled={actionsDisabled || !!combat || !!shop} style={{ display: "block", width: "100%", marginBottom: "6px", padding: "8px 10px", textAlign: "left", background: "transparent", border: `1px solid ${AMBER}`, color: AMBER, cursor: "pointer" }}>Walk to {ZONES[zoneId].name}</button>
+                  ))}
+                </div>
+              </div>
+            </section>
+          )}
           {log.map((entry, i) => {
             const revealed = revealedLog[i];
             if (entry.role === "player") {
