@@ -1,5 +1,5 @@
 // Static, player-facing compendium lore. This is code-owned canon: the narrator does not generate it.
-const faction = (id, name, leaderTitle, leaderName, trait) => ({ id, name, leaderTitle, leaderName, trait, description: "" });
+const faction = (id, name, leaderTitle, leaderName, trait, details = {}) => ({ id, name, leaderTitle, leaderName, trait, description: "", ...details });
 const entry = (name, description) => ({ name, description });
 
 export const WORLD_LORE = [
@@ -51,7 +51,41 @@ export const WORLD_LORE = [
     beliefSystem: [entry("The Hallowed Kin", "ancestors who walk alongside the living, most present in the hardest winters, felt rather than prayed to."), entry("The Old Cold", "the land itself, an indifferent force respected rather than resented or worshipped.")],
     customs: [entry("Earned toughness", "Northerners are genuinely hardier than Southerners because children face real cold/hardship young. An untested Northerner is unfinished regardless of age."), entry("Scar-oaths", "vows bound in deliberate, meaningful scars, sometimes re-marked at key life moments."), entry("Saga-Binders", "one person per clan whose sole duty is memorizing/performing the clan's full saga, sung not written."), entry("The Frostvigil", "coming-of-age rite: tending a deliberately small hearth fire alone through the coldest night, barely enough fuel to last till dawn.")],
     history: [entry("The First Winter", "a multi-year winter/famine nearly destroyed the North, splitting the clans into Ashgrim (isolationist) and Wintermere (pro-Southern-trade). Chieftain Torvald's line (now Drake's Hollow) held both together without fully siding with either."), entry("The Unclanned", "individuals/bands who couldn't live under any clan's disciplined oath-and-saga structure broke off entirely; the actual raiders outsiders wrongly associate with \"the North.\"")],
-    factions: [faction("drakes_hollow", "Drake's Hollow", "Chieftain", "Torvald Drake's Hollow", "largest, first-among-equals, steady unifier"), faction("ashgrim", "Ashgrim", "Chieftain", "Hilda Ashgrim", "hardest, isolationist, distrusts Heartlands"), faction("wintermere", "Wintermere", "Chieftain", "Bjorn Wintermere", "pro-Southern-trade, seen as compromising by Ashgrim")],
+    factions: [
+      faction("drakes_hollow", "Drake's Hollow", "Chieftain", "Torvald Drake's Hollow", "largest, first-among-equals, steady unifier", {
+        sigil: "The Elk (totem, not heraldic)",
+        words: "We Hold, We Endure",
+        familyMembers: [
+          { name: "Chieftain Torvald", role: "Chieftain" },
+          { name: "Freya", role: "Daughter, trained successor", description: "Some elders are quietly uneasy the first-among-equals seat may pass to a woman for the first time." },
+          { name: "Ollan", role: "Saga-Binder", description: "Keeper of the full, uncut First Winter history." },
+        ],
+      }),
+      faction("ashgrim", "Ashgrim", "Chieftain", "Hilda Ashgrim", "hardest, isolationist, distrusts Heartlands", {
+        sigil: "The Wolf (totem)",
+        words: "Ice Does Not Bend",
+        familyMembers: [
+          { name: "Chieftain Hilda", role: "Chieftain" },
+          { name: "Kaldur", role: "Son", description: "Raised even harder than his mother was, resents Wintermere more than she does." },
+          { name: "Brynja", role: "Elder Saga-Binder", description: "Keeps the rivalry's original grievance alive through the sagas." },
+        ],
+      }),
+      faction("wintermere", "Wintermere", "Chieftain", "Bjorn Wintermere", "pro-Southern-trade, seen as compromising by Ashgrim", {
+        sigil: "The Raven (totem)",
+        words: "The Bending Branch Outlives the Storm",
+        familyMembers: [
+          { name: "Chieftain Bjorn", role: "Chieftain" },
+          { name: "Stigr", role: "Brother, trade-envoy", description: "Handles actual negotiation with Heartlands/Coast merchants." },
+          { name: "Runa", role: "Warrior", description: "Real scar-oaths earned in real danger — a living rebuttal to Ashgrim's accusation that Wintermere has gone soft." },
+        ],
+      }),
+      faction("skarrow", "Clan Skarrow", "", "", "", {
+        sigil: "The Snow-Hare (totem)",
+        words: "We Are Not Where You Look",
+        description: "Semi-nomadic, follows the herds rather than holding a fixed seat, making them naturally elusive and neutral in Tundra politics.",
+        governance: "Led by council vote among clan elders, decided purely on what best serves the people right now — no bloodline, no permanent seat of power. This is structurally different from the other three clans' hereditary Chieftain model, and explains why Skarrow stays neutral: their leadership never sits still long enough to develop entrenched rivalries.",
+      }),
+    ],
     wildcard: { name: "\"The Wintermere Orphan\"", trait: "raised by no clan, hunter-for-hire, conflicted loyalty" },
   },
   {
@@ -76,7 +110,48 @@ export const WORLD_LORE = [
     regionId: "heartlands", regionName: "Heartlands", dominantRace: "Human (Southern culture)", racePercent: "~70%",
     politicalStructure: "Noble houses under weak central monarchy; main political engine of the Age of Anvils",
     // TODO: Add the Heartlands pantheon, customs, and deep-history pass when those sections are written.
-    factions: [faction("house_ardenne", "House Ardenne", "King", "Edmure Ardenne", "weak crown"), faction("house_caswell", "House Caswell", "Lady", "Osanna Caswell", "wealthiest, patient, marriage-politics"), faction("house_draymoor", "House Draymoor", "Lord", "Rickart Draymoor", "martial, resents Caswell's wealth-influence"), faction("house_voss", "House Voss", "Alderman", "Voss", "minor/ambitious, holds Barrow's Cross")],
+    // Volatile houses may rise, fall, or be added/removed through player choices and a future world-clock system; core houses remain structurally fixed.
+    factions: [
+      faction("house_ardenne", "House Ardenne", "King", "Edmure Ardenne", "weak crown", {
+        sigil: "White stag on grey", words: "Steadfast We Endure", seat: "Ardenne Keep, in the capital, Sunhold", tier: "core",
+        familyMembers: [
+          { name: "King Edmure Ardenne", role: "King" },
+          { name: "Crown Prince Aldric", role: "Heir", description: "Young and untested — a real succession worry under a Creed that judges steadfastness above bloodline." },
+        ],
+      }),
+      faction("house_caswell", "House Caswell", "Lady", "Osanna Caswell", "wealthiest, patient, marriage-politics", {
+        sigil: "Golden wheat sheaf on green", words: "Patience Reaps All", seat: "Goldmere Hall", tier: "core",
+        familyMembers: [
+          { name: "Lady Osanna Caswell", role: "Lady" },
+          { name: "Seraphina Caswell", role: "Daughter", description: "Quietly being positioned as a match for Crown Prince Aldric — the literal mechanism of House Caswell's ambition toward the crown via marriage, not war." },
+          { name: "Ser Halric Caswell", role: "Brother", description: "Discreetly building the House's first real private levy." },
+        ],
+      }),
+      faction("house_draymoor", "House Draymoor", "Lord", "Rickart Draymoor", "martial, resents Caswell's wealth-influence", {
+        sigil: "Crossed red war-hammer and spear on black", words: "Where We Strike, We Hold", seat: "Ironwatch", tier: "core",
+        familyMembers: [
+          { name: "Lord Rickart Draymoor", role: "Lord" },
+          { name: "Ser Bram Draymoor", role: "Son", description: "Hot-headed, itching to prove himself." },
+          { name: "Lady Wynn Draymoor", role: "Sister", description: "A ranking Warden of the Light, giving House Draymoor leverage inside the Faith itself." },
+        ],
+      }),
+      faction("house_voss", "House Voss", "Alderman", "Voss", "minor/ambitious, holds Barrow's Cross", {
+        sigil: "Grey heron over water", words: "We Rise Unseen", seat: "Barrow's Cross", tier: "core",
+        familyMembers: [
+          { name: "Alderman Voss", role: "Alderman" },
+          { name: "Mirelle Voss", role: "Niece and heir", description: "Sharp, ambitious." },
+          { name: "Ser Dennick Voss", role: "Cousin", description: "The House's only knight, embarrassingly under-equipped next to Draymoor's forces." },
+        ],
+      }),
+      faction("house_ferrow", "House Ferrow", "", "", "", {
+        sigil: "Black fox", words: "We Choose Wisely", seat: "Ferrow's Rest", tier: "volatile",
+        description: "A minor house sitting on contested ground between Caswell and Draymoor territory, constantly forced to pick sides.",
+      }),
+      faction("house_talvane", "House Talvane", "", "", "", {
+        sigil: "Crossed silver keys", words: "Every Door, A Price", seat: "Talvane's Landing", tier: "volatile",
+        description: "A small house near the Coast border, punching above its weight as the overland trade link to Saltmere and Tidewatch.",
+      }),
+    ],
     wildcard: { name: "\"The Ledger\"", trait: "unnamed info-broker, sells secrets to all" },
   },
 ];
