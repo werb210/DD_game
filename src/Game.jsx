@@ -296,6 +296,21 @@ function skillCheckOdds(offer, worldState, character) {
   };
 }
 
+const DIALOGUE_STAT_CHECK_TYPES = Object.freeze({
+  "Persuasion (CHA)": "sway",
+  "Intimidation (STR)": "force",
+  "Deception (CHA)": "sway",
+  "Insight (WIS)": "perceive",
+  "Reasoning (INT)": "discern",
+});
+
+function narratorNpcContext(worldState) {
+  const contextKeys = ["id", "name", "memory", "traits", "goal", "secret", "trust", "respect", "fear", "personalAxes"];
+  return (worldState?.npcs || []).map((npc) => Object.fromEntries(
+    contextKeys.filter((key) => npc[key] !== undefined && npc[key] !== null).map((key) => [key, npc[key]])
+  ));
+}
+
 const INJURY_TABLE = {
   chest: { statKey: "con", amount: -2, description: "A pale, ragged scar crosses the ribs." },
   arm: { statKey: "str", amount: -2, description: "A deep scar runs along the fighting arm." },
@@ -1292,7 +1307,7 @@ Respond with ONLY valid JSON, no markdown fences, no preamble:
     ,{"type": "location_hint", "existingId": "exact WORLD MAP location id"}
     ,{"type": "day_advance", "reason": "short description of the sleep or time skip"}
     ,{"type": "skill_check_offer", "checkType": "force|finesse|endure|discern|perceive|sway", "npcId": "optional exact existing npc id when a specific person is involved"}
-    ,{"type": "dialogue_offer", "npcId": "exact existing NPC id", "choices": [{"text": "string", "tag": "Compassionate|Aggressive|Charming|Logical|Suspicious|Neutral|Deceptive", "axis": {"compassion": 0, "honesty": 0, "diplomacy": 0}, "trf": {"trust": 0, "respect": 0, "fear": 0}, "requiresGoodwill": "optional boolean", "allowedWhenHostile": "optional boolean", "significant": "optional boolean", "statCheck": "optional object replacing axis/trf: {stat, chance, axisSuccess, axisFail, trfSuccess, trfFail}"}]}
+    ,{"type": "dialogue_offer", "npcId": "exact existing NPC id", "choices": [{"text": "string", "tag": "Compassionate|Aggressive|Charming|Logical|Suspicious|Neutral|Deceptive", "intent": "Attempt|Expression", "axis": {"compassion": 0, "honesty": 0, "diplomacy": 0}, "trf": {"trust": 0, "respect": 0, "fear": 0}, "requiresGoodwill": "optional boolean", "allowedWhenHostile": "optional boolean", "significant": "optional boolean", "statCheck": "optional object replacing axis/trf: {stat: Persuasion (CHA)|Intimidation (STR)|Deception (CHA)|Insight (WIS)|Reasoning (INT), axisSuccess, axisFail, trfSuccess, trfFail}"}]}
   ],
   "suggestedActions": ["string", "string", "string"]
 }
@@ -1301,7 +1316,13 @@ For "location": use null if unchanged or {"existingId": "exact id"} for every re
 
 Emit location_hint only when the fiction clearly gives the player a real, actionable lead to a WORLD MAP place: an NPC names a destination, gives clear directions, or marks it on a map. Use its exact existingId. Do NOT emit it for passing references, distant lore, or vague world-flavor mentions that do not tell the player where they could actually go.
 
-Use dialogue_offer whenever an existing named NPC presents discrete replies. Every choice must have exactly one listed tone tag and hand-authored axis/trf effects (or one statCheck instead). Always include at least one Neutral leave choice with allowedWhenHostile true. Do not derive effects from tags.
+Use dialogue_offer whenever an existing named NPC presents discrete replies. These are the live conversation choices shown to the player, not suggestedActions. Follow every rule below:
+- Give EVERY choice exactly one (never zero or multiple) tone tag from: Compassionate, Aggressive, Charming, Logical, Suspicious, Neutral, Deceptive.
+- Flag EVERY choice with intent "Attempt" or "Expression". An Attempt tries to change the NPC's mind or behavior (commonly Charming, Aggressive pressure, or Deceptive). An Expression communicates how the player feels or responds without asking the NPC to act against their inclination (commonly Compassionate, Logical, Suspicious, or Neutral). Classify the actual choice, not merely its tone.
+- Decide per choice whether uncertainty and stakes warrant a stat check. Attempts typically warrant one and Expressions typically do not, but this is guidance rather than a hard mapping. If warranted, include statCheck and name exactly one relevant stat, such as "Persuasion (CHA)" or "Intimidation (STR)". NEVER provide a chance/percentage, roll, success, or failure: game code calculates the odds and resolves the roll. You may author the existing success/failure axis and relationship consequences, but not the result.
+- Vary choice count with the scene. Aim for 4-6 distinct, substantive choices when the NPC or situation has personality, goals, secrets, relationships, or meaningful stakes. Do not default to exactly three. Fewer choices are appropriate only for a truly minor or inconsequential interaction.
+- Ground the choices in NARRATOR NPC CONTEXT: use that NPC's existing memory, traits/personality, goal, secret (without revealing it before the fiction earns it), trust, respect, fear, and personalAxes whenever present. Do not invent missing profile data.
+Every choice must still include hand-authored axis/trf effects (or the success/failure effects inside statCheck). Always include at least one Neutral leave choice with allowedWhenHostile true. Do not derive effects from tags.
 
 Each entry in WORLD STATE.locations has a "connections" array — the other location ids directly reachable from it based on where the player has actually traveled before. Moving to a location already listed in the current location's connections is a short, ordinary trip — narrate it briefly. Moving to a known location that ISN'T in the current connections (somewhere the player has heard of but never traveled to directly from here) should read like a real journey — time passing, distance covered — rather than an instant unexplained jump, even though it's still a single action. Code will automatically treat any move as establishing a new direct route between the two places, so once you've narrated that journey once, future trips between them can be brief.
 
@@ -1788,7 +1809,7 @@ async function pingRealCodePath(liveWorldState, liveCharacter, liveQuests, actio
   // the ACTUAL live game state at the moment of failure — not a synthetic fresh-game
   // stand-in. This is what makes it a true reproduction of the failing call rather than
   // just proof that callModel works when nothing has happened yet.
-  const realisticUserMessage = `WORLD STATE:\n${JSON.stringify(liveWorldState, null, 2)}\n\nCHARACTER SUMMARY (for narrative color only — do not cite numbers):\n${JSON.stringify(
+  const realisticUserMessage = `WORLD STATE:\n${JSON.stringify(liveWorldState, null, 2)}\n\nNARRATOR NPC CONTEXT (existing data only):\n${JSON.stringify(narratorNpcContext(liveWorldState), null, 2)}\n\nCHARACTER SUMMARY (for narrative color only — do not cite numbers):\n${JSON.stringify(
     characterSummaryForPrompt(liveCharacter, liveQuests),
     null,
     2
@@ -2797,7 +2818,18 @@ export default function DMMemoryTest() {
         }
       } else if (event.type === "dialogue_offer") {
         const npc = worldState.npcs.find((entry) => entry.id === event.npcId);
-        const choices = Array.isArray(event.choices) ? event.choices : [];
+        const choices = Array.isArray(event.choices) ? event.choices.map((choice) => {
+          if (!choice?.statCheck) return choice;
+          const checkType = DIALOGUE_STAT_CHECK_TYPES[choice.statCheck.stat];
+          const odds = checkType ? skillCheckOdds({ checkType, npcId: event.npcId }, worldState, character) : null;
+          // New narrator output supplies only the relevant stat. Odds are always
+          // hydrated here by the code-owned resolver. The fallback keeps older saved
+          // or hand-authored offers (including Voss) compatible without changing them.
+          const chance = odds?.chance ?? Number(choice.statCheck.chance);
+          return Number.isFinite(chance)
+            ? { ...choice, statCheck: { ...choice.statCheck, chance: clamp(Math.round(chance), 0, 100) } }
+            : { ...choice, statCheck: null };
+        }) : [];
         if (npc && visibleDialogueChoices(npc, choices).length) {
           setDialogueOffer({ npcId: npc.id, choices });
           dialogueRewardsRef.current = new Set();
@@ -2869,7 +2901,7 @@ export default function DMMemoryTest() {
       difficultyTier: odds.difficultyTier,
       ...(offeredCheck.npcId ? { npcId: offeredCheck.npcId } : {}),
     } : null;
-    const userMessage = `WORLD STATE:\n${JSON.stringify(worldState, null, 2)}\n\nCHARACTER SUMMARY (for narrative color only — do not cite numbers):\n${JSON.stringify(
+    const userMessage = `WORLD STATE:\n${JSON.stringify(worldState, null, 2)}\n\nNARRATOR NPC CONTEXT (existing data only):\n${JSON.stringify(narratorNpcContext(worldState), null, 2)}\n\nCHARACTER SUMMARY (for narrative color only — do not cite numbers):\n${JSON.stringify(
       characterSummaryForPrompt(character, quests),
       null,
       2
