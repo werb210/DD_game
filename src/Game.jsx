@@ -37,7 +37,7 @@ import { STATUS_EFFECT_TABLE } from './data/statusEffectData.js';
 import { WEAPON_ASPECT_TABLE } from './data/weaponAspectData.js';
 import { RUNE_TABLE } from './data/runeData.js';
 import { FACTION_IDS, adjustFactionReputation, getFactionTier, seedFactionReputation } from './data/factionReputation.js';
-import { clampPersonalAxes, factionDeltaFor, getDisposition, visibleDialogueChoices, withDialogueDefaults } from './data/dialogueConsequences.js';
+import { DIALOGUE_TONES, clampPersonalAxes, factionDeltaFor, getDisposition, visibleDialogueChoices, withDialogueDefaults } from './data/dialogueConsequences.js';
 import { AVAILABLE_OCCUPATIONS, SLOT_SCALING, WARRIOR_PATHS, WARRIOR_THRESHOLDS, WARRIOR_TITLES, availableWeaponMoves, freshWarrior, freshWarriorChoices, pendingWarriorChoice, rankForWarriorXp, slotIsUnlocked, warriorPassiveBonuses, warriorSlots, warriorXpGain } from './data/warriorOccupation.js';
 
 // ---- Design tokens ----
@@ -303,6 +303,30 @@ const DIALOGUE_STAT_CHECK_TYPES = Object.freeze({
   "Insight (WIS)": "perceive",
   "Reasoning (INT)": "discern",
 });
+
+function normalizeSuggestedActions(actions, worldState, character, npcId = null) {
+  if (!Array.isArray(actions)) return [];
+  return actions.map((action) => {
+    // Keep code-owned and older-save suggestions usable, while narrator output is
+    // held to the structured contract below.
+    const source = typeof action === "string"
+      ? { text: action, tag: "Neutral", check: null }
+      : action;
+    if (!source || typeof source.text !== "string" || !source.text.trim()) return null;
+    const tag = DIALOGUE_TONES.includes(source.tag) ? source.tag : "Neutral";
+    const checkType = source.check && typeof source.check.stat === "string"
+      ? DIALOGUE_STAT_CHECK_TYPES[source.check.stat]
+      : null;
+    const odds = checkType ? skillCheckOdds({ checkType, npcId }, worldState, character) : null;
+    return {
+      text: source.text.trim(),
+      tag,
+      // Never retain the narrator's placeholder chance. A recognized stat is
+      // hydrated exclusively by the same code-owned odds resolver as dialogue_offer.
+      check: odds ? { stat: source.check.stat, chance: odds.chance, checkType, difficultyTier: odds.difficultyTier } : null,
+    };
+  }).filter(Boolean);
+}
 
 function narratorNpcContext(worldState) {
   const contextKeys = ["id", "name", "memory", "traits", "goal", "secret", "trust", "respect", "fear", "personalAxes"];
@@ -1309,8 +1333,13 @@ Respond with ONLY valid JSON, no markdown fences, no preamble:
     ,{"type": "skill_check_offer", "checkType": "force|finesse|endure|discern|perceive|sway", "npcId": "optional exact existing npc id when a specific person is involved"}
     ,{"type": "dialogue_offer", "npcId": "exact existing NPC id", "choices": [{"text": "string", "tag": "Compassionate|Aggressive|Charming|Logical|Suspicious|Neutral|Deceptive", "intent": "Attempt|Expression", "axis": {"compassion": 0, "honesty": 0, "diplomacy": 0}, "trf": {"trust": 0, "respect": 0, "fear": 0}, "requiresGoodwill": "optional boolean", "allowedWhenHostile": "optional boolean", "significant": "optional boolean", "statCheck": "optional object replacing axis/trf: {stat: Persuasion (CHA)|Intimidation (STR)|Deception (CHA)|Insight (WIS)|Reasoning (INT), axisSuccess, axisFail, trfSuccess, trfFail}"}]}
   ],
-  "suggestedActions": ["string", "string", "string"]
+  "suggestedActions": [
+    {"text": "string", "tag": "Compassionate|Aggressive|Charming|Logical|Suspicious|Neutral|Deceptive", "check": {"stat": "Persuasion (CHA)|Intimidation (STR)|Deception (CHA)|Insight (WIS)|Reasoning (INT)", "chance": 0}},
+    {"text": "string", "tag": "Compassionate|Aggressive|Charming|Logical|Suspicious|Neutral|Deceptive", "check": null}
+  ]
 }
+
+Every suggestedActions entry must be an object with text, exactly one listed tone tag, and check. Use check: null unless the action is an uncertain, consequential attempt. When a check applies, identify the relevant stat and always send chance: 0 as a placeholder signal; game code discards that number and computes the authoritative percentage. Never predict the displayed odds or the roll result.
 
 For "location": use null if unchanged or {"existingId": "exact id"} for every real named settlement or point of interest in WORLD MAP. The rare {"newDisplayName": "string"} path is reserved only for minor, disposable, scene-specific flavor spots such as a particular room, back alley, or campsite. Never use newDisplayName to create a settlement, landmark, dungeon, or persistent travel destination, and never use it for a named WORLD MAP place.
 
@@ -2333,12 +2362,12 @@ export default function DMMemoryTest() {
         .then((result) => {
           const narration = typeof result.narration === "string" ? result.narration : null;
           const suggestedActions = Array.isArray(result.suggestedActions) && result.suggestedActions.length
-            ? result.suggestedActions.slice(0, 3)
+            ? normalizeSuggestedActions(result.suggestedActions.slice(0, 3), openingWorldState, openingCharacter, result.interactionNpcId)
             : null;
           if (narration) {
             const validatedType = validateInteractionType(result, [], openingWorldState.npcs);
             setInteractionType(validatedType);
-            setLog([{ role: "dm", narration: paceNarration(narration, validatedType), suggestedActions: suggestedActions || FALLBACK_OPENING_ACTIONS[startingRegion] || FALLBACK_OPENING_ACTIONS.heartlands, interactionType: validatedType }]);
+            setLog([{ role: "dm", narration: paceNarration(narration, validatedType), suggestedActions: suggestedActions?.length ? suggestedActions : normalizeSuggestedActions(FALLBACK_OPENING_ACTIONS[startingRegion] || FALLBACK_OPENING_ACTIONS.heartlands, openingWorldState, openingCharacter), interactionType: validatedType }]);
           }
         })
         .catch((e) => {
@@ -2884,7 +2913,7 @@ export default function DMMemoryTest() {
     setTrainingOffer(null);
   }
 
-  async function submitAction(action) {
+  async function submitAction(action, suggestedCheck = null) {
     if (!action.trim() || loading || combat || shop || pendingPurchase || trainingOffer) return;
     if ((character.forcedRest || character.fatigue <= 0) && !/\b(rest|sleep|camp|inn)\b/i.test(action)) {
       pushSystemLine(`You are exhausted. A forced rest is required before you can take further risky actions.`);
@@ -2895,10 +2924,10 @@ export default function DMMemoryTest() {
     setLog((l) => [...l, { role: "player", text: action }]);
     setInput("");
 
-    const offeredCheck = pendingSkillCheck;
-    const odds = offeredCheck ? skillCheckOdds(offeredCheck, worldState, character) : null;
+    const offeredCheck = suggestedCheck?.offer || pendingSkillCheck;
+    const odds = suggestedCheck?.odds || (offeredCheck ? skillCheckOdds(offeredCheck, worldState, character) : null);
     const skillCheckFacts = odds ? {
-      passed: Math.random() * 100 < odds.chance,
+      passed: suggestedCheck ? suggestedCheck.passed : Math.random() * 100 < odds.chance,
       checkType: offeredCheck.checkType,
       difficultyTier: odds.difficultyTier,
       ...(offeredCheck.npcId ? { npcId: offeredCheck.npcId } : {}),
@@ -2919,7 +2948,10 @@ export default function DMMemoryTest() {
       const rawNarration = typeof result.narration === "string" ? result.narration : "(the DM's response was missing narration text)";
       const stateUpdates = result.stateUpdates && typeof result.stateUpdates === "object" ? result.stateUpdates : {};
       const events = Array.isArray(result.events) ? result.events : [];
-      const suggestedActions = Array.isArray(result.suggestedActions) ? result.suggestedActions : [];
+      const suggestedNpcId = result.interactionNpcId
+        || events.find((event) => event?.type === "dialogue_offer" && worldState.npcs.some((npc) => npc.id === event.npcId))?.npcId
+        || null;
+      const suggestedActions = normalizeSuggestedActions(result.suggestedActions, worldState, character, suggestedNpcId);
       const validatedInteractionType = validateInteractionType(result, quests, worldState.npcs);
       const narration = paceNarration(rawNarration, validatedInteractionType);
       setInteractionType(validatedInteractionType);
@@ -3039,7 +3071,7 @@ export default function DMMemoryTest() {
         return next;
       });
 
-      if (offeredCheck) {
+      if (offeredCheck && !suggestedCheck) {
         setPendingSkillCheck(null);
         pushSystemLine(rollSegments(`${odds.check.label} check (${odds.chance}% · ${odds.difficultyTier.toUpperCase()}): `, odds.chance, skillCheckFacts.passed));
       }
@@ -3053,6 +3085,20 @@ export default function DMMemoryTest() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function chooseSuggestedAction(choice) {
+    if (!choice?.check) {
+      submitAction(choice.text);
+      return;
+    }
+    const chance = clamp(Number(choice.check.chance) || 0, 0, 100);
+    const passed = Math.random() * 100 < chance;
+    const offer = { checkType: choice.check.checkType };
+    const odds = { chance, difficultyTier: choice.check.difficultyTier, check: SKILL_CHECK_TYPES[choice.check.checkType] };
+    // This is the same roll segment/reveal path used by Voss dialogue checks.
+    pushSystemLine(rollSegments(`${choice.tag} dialogue check (${chance}%): `, chance, passed));
+    submitAction(choice.text, { offer, odds, passed });
   }
 
   function chooseDialogue(choice) {
@@ -3613,11 +3659,14 @@ export default function DMMemoryTest() {
                 </p>
                 {entry.suggestedActions && (
                   <div style={{ marginTop: "14px", display: "flex", flexWrap: "wrap", gap: "8px" }}>
-                    {entry.suggestedActions.map((a, j) => (
-                      <button key={j} onClick={() => submitAction(a)} disabled={actionsDisabled || !!combat || !!shop || !!pendingPurchase || !!trainingOffer} style={{ background: "linear-gradient(180deg, #241D15 0%, #1A150F 100%)", border: "1px solid #4A3F2C", color: INK, padding: "7px 14px", fontFamily: DISPLAY_FONT, fontSize: "11.5px", letterSpacing: "0.03em", cursor: actionsDisabled || combat || shop || pendingPurchase || trainingOffer ? "default" : "pointer", opacity: actionsDisabled || combat || shop || pendingPurchase || trainingOffer ? 0.5 : 1, borderRadius: "2px" }}>
-                        {a}
+                    {entry.suggestedActions.map((rawAction, j) => {
+                      const a = typeof rawAction === "string" ? { text: rawAction, tag: "Neutral", check: null } : rawAction;
+                      return (
+                      <button key={j} onClick={() => chooseSuggestedAction(a)} disabled={actionsDisabled || !!combat || !!shop || !!pendingPurchase || !!trainingOffer} style={{ display: "flex", alignItems: "center", gap: "9px", background: "linear-gradient(180deg, #241D15 0%, #1A150F 100%)", border: "1px solid #4A3F2C", color: INK, padding: "7px 14px", fontFamily: DISPLAY_FONT, fontSize: "11.5px", letterSpacing: "0.03em", cursor: actionsDisabled || combat || shop || pendingPurchase || trainingOffer ? "default" : "pointer", opacity: actionsDisabled || combat || shop || pendingPurchase || trainingOffer ? 0.5 : 1, borderRadius: "2px" }}>
+                        <span style={{ flex: "0 0 auto", color: TONE_COLORS[a.tag] || TONE_COLORS.Neutral, border: "1px solid currentColor", borderRadius: "999px", padding: "2px 7px", fontSize: "9px", letterSpacing: ".04em", textTransform: "uppercase" }}>{a.tag}{a.check ? ` · ${clamp(Number(a.check.chance) || 0, 0, 100)}%` : ""}</span>
+                        <span>{a.text}</span>
                       </button>
-                    ))}
+                    );})}
                   </div>
                 )}
               </div>
