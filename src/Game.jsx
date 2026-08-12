@@ -1662,6 +1662,8 @@ function displayNameForKey(key) {
   return key;
 }
 
+const NARRATION_MODEL = "claude-haiku-4-5-20251001";
+
 function buildAnthropicHeaders() {
   const headers = { "Content-Type": "application/json" };
   if (typeof window !== "undefined" && window.__ANTHROPIC_API_KEY__) {
@@ -1686,7 +1688,7 @@ async function callModel(systemPrompt, userMessage, maxTokens = 1200, attempt = 
       method: "POST",
       headers: buildAnthropicHeaders(),
       body: JSON.stringify({
-        model: "claude-sonnet-4-6",
+        model: NARRATION_MODEL,
         max_tokens: maxTokens,
         system: systemPrompt,
         messages,
@@ -1773,7 +1775,7 @@ async function pingAPI() {
     method: "POST",
     headers: buildAnthropicHeaders(),
     body: JSON.stringify({
-      model: "claude-sonnet-4-6",
+      model: NARRATION_MODEL,
       max_tokens: 50,
       messages: [{ role: "user", content: "Reply with exactly: pong" }],
     }),
@@ -1791,7 +1793,7 @@ async function pingWithSystemPrompt() {
       method: "POST",
       headers: buildAnthropicHeaders(),
       body: JSON.stringify({
-        model: "claude-sonnet-4-6",
+        model: NARRATION_MODEL,
         max_tokens: 1200,
         system: EXPLORATION_SYSTEM_PROMPT,
         messages: [{ role: "user", content: "Reply with exactly: pong" }],
