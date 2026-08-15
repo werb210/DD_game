@@ -39,6 +39,8 @@ import { RUNE_TABLE } from './data/runeData.js';
 import { FACTION_IDS, adjustFactionReputation, getFactionTier, seedFactionReputation } from './data/factionReputation.js';
 import { DIALOGUE_TONES, clampPersonalAxes, factionDeltaFor, getDisposition, visibleDialogueChoices, withDialogueDefaults } from './data/dialogueConsequences.js';
 import { AVAILABLE_OCCUPATIONS, SLOT_SCALING, WARRIOR_PATHS, WARRIOR_THRESHOLDS, WARRIOR_TITLES, availableWeaponMoves, freshWarrior, freshWarriorChoices, pendingWarriorChoice, rankForWarriorXp, slotIsUnlocked, warriorPassiveBonuses, warriorSlots, warriorXpGain } from './data/warriorOccupation.js';
+import { freshRaceTree, HYBRID_EVOLUTIONS, TIER_LEVELS } from './data/RACE_TREES.js';
+import { RACE_TREE_RARITY, effectiveNodeEffects, highestStatTie, nodeLockReason, normalizeRaceTree, optionsForTier, pendingEvolutions, raceTreeFor, statForRoot } from './data/raceTreeEngine.js';
 
 // ---- Design tokens ----
 // Grimdark medieval reskin: cold iron, old blood, tarnished gold leaf on parchment ink.
@@ -1049,6 +1051,7 @@ const initialCharacter = {
   warriorChoices: freshWarriorChoices(),
   occupationAbilities: ["brace"],
   warriorDailyUses: {},
+  raceTree: freshRaceTree(),
 };
 
 const LORE_REGION_KEY = {
@@ -2151,6 +2154,7 @@ export default function DMMemoryTest() {
         occupations: saved.character.occupations || { primary: freshWarrior(), secondary: null, tertiary: null },
         warriorChoices: { ...freshWarriorChoices(), ...(saved.character.warriorChoices || {}) },
         occupationAbilities: [...new Set([...(saved.character.occupationAbilities || []), "brace"])],
+        raceTree: normalizeRaceTree(saved.character.raceTree),
         equipped: { weapon: null, armor: null, shield: null, ...(saved.character.equipped || {}) },
         attributes: migratedAttributes,
         inventory: migratedInventory,
@@ -2953,6 +2957,27 @@ export default function DMMemoryTest() {
     setLog((prev) => [...prev, { role: "dm", narration: `${trainer.name} puts you through a focused lesson in ${ATTRIBUTE_DEFS[trainingOffer.stat].label.toLowerCase()}. The drills are punishing, but by the end your hard-won improvement is unmistakable.`, suggestedActions: null, interactionType: "standard" }]);
     pushSystemLine(`↑ ${ATTRIBUTE_DEFS[trainingOffer.stat].short} ${current} → ${nextScore} · -${cost} gold · -1 Hunger · -4 Fatigue`);
     setTrainingOffer(null);
+  }
+
+  function selectRaceTreeNode(node) {
+    const tree = raceTreeFor(character);
+    if (!tree || nodeLockReason(character, tree, node)) return;
+    if (node.tier <= 3 && (node.root || normalizeRaceTree(character.raceTree).tier1)) {
+      const tied = highestStatTie(character);
+      if (tied.length > 1) {
+        const root = node.root || normalizeRaceTree(character.raceTree).tier1;
+        const required = statForRoot(tree, root);
+        if (!window.confirm(`${tied.map((key) => key === "arcane" ? "ARC" : key.toUpperCase()).join(" and ")} are tied for highest. Choose ${root} for this permanent pick?`)) return;
+        if (!tied.includes(required)) return;
+      }
+    }
+    const nextRaceTree = { ...normalizeRaceTree(character.raceTree), [`tier${node.tier}`]: node.id };
+    if (node.id === "orc_t6_f") nextRaceTree.oldKarskDialogueUnlocked = true;
+    const candidate = { ...character, raceTree: nextRaceTree };
+    pendingEvolutions(candidate, tree).forEach((evolution) => {
+      if (window.confirm(`You have proven yourself a ${evolution.name}. Embrace this path?`)) nextRaceTree.evolutions = [...nextRaceTree.evolutions, evolution.id];
+    });
+    setCharacter((current) => ({ ...current, raceTree: nextRaceTree }));
   }
 
   async function submitAction(action, suggestedCheck = null) {
@@ -3901,6 +3926,7 @@ export default function DMMemoryTest() {
         </>}
 
         {ledgerTab === "skills" && <>
+        <RaceEvolutionTree character={character} onSelect={selectRaceTreeNode} />
         <LedgerSection title="Occupations">
           {['primary', 'secondary', 'tertiary'].map((slot) => { const occupation = character.occupations?.[slot]; const unlocked = slotIsUnlocked(character, slot); if (!occupation) return <div key={slot} style={{ opacity: unlocked ? 1 : .45, border: `1px solid ${DIM}`, padding: '10px', marginBottom: '8px' }}><div style={{ color: unlocked ? AMBER : DIM, textTransform: 'capitalize' }}>{slot} — {unlocked ? 'Choose occupation' : 'Locked'}</div>{!unlocked && <div style={{ color: SLATE, fontSize: '10px' }}>{slot === 'secondary' ? 'Unlocks at Primary Rank 3' : 'Unlocks at Primary Rank 4 and Secondary Rank 2'}</div>}{unlocked && AVAILABLE_OCCUPATIONS.map((entry) => <button key={entry.id} onClick={() => selectOccupation(slot, entry.id)} style={{ marginTop: '7px', background: '#211B14', border: `1px solid ${AMBER}`, color: INK }}>{entry.name}</button>)}</div>; const definition = AVAILABLE_OCCUPATIONS.find((entry) => entry.id === occupation.id); if (occupation.id !== 'warrior') return <div key={slot} style={{ border: `1px solid ${AMBER}`, padding: '10px', marginBottom: '8px' }}><div style={{ color: AMBER, textTransform: 'capitalize' }}>{slot}: {definition?.name || occupation.id} — Rank {occupation.rank}: {definition?.rankOneTitle}</div><div style={{ color: SLATE, fontSize: '10px', marginTop: '6px' }}>{occupation.xp.toFixed(1)} occupation XP</div></div>; const nextThreshold = WARRIOR_THRESHOLDS[Math.min(4, occupation.rank + 1)]; const previous = occupation.rank === 1 ? 0 : WARRIOR_THRESHOLDS[occupation.rank]; return <div key={slot} style={{ border: `1px solid ${AMBER}`, padding: '10px', marginBottom: '8px' }}><div style={{ color: AMBER, textTransform: 'capitalize' }}>{slot}: Warrior — Rank {occupation.rank}: {WARRIOR_TITLES[occupation.rank]}</div>{occupation.rank < 4 ? <><div style={{ color: SLATE, fontSize: '10px', marginTop: '6px' }}>{occupation.xp.toFixed(1)} / {nextThreshold} occupation XP</div><StatBar value={occupation.xp - previous} max={nextThreshold - previous} color={CODE_VOICE} height={5} /></> : <div style={{ color: CODE_VOICE }}>Maximum rank · {occupation.xp.toFixed(1)} XP</div>}{[2,3,4].map((rank) => { const chosen = character.warriorChoices?.[`rank${rank}`]; const path = WARRIOR_PATHS[rank]?.[chosen]; return path ? <div key={rank} style={{ marginTop: '8px', color: INK }}><b>Rank {rank} — {path.name}</b><div style={{ color: CODE_VOICE }}>{path.active}</div><div style={{ color: SLATE }}>{path.passive} ({Math.round(SLOT_SCALING[slot] * 100)}% slot effectiveness)</div></div> : null; })}</div>; })}
           <div style={{ color: SLATE, fontSize: '10px' }}>Moves: {availableWeaponMoves(character).join(', ')}</div>
@@ -4782,6 +4808,38 @@ function InventoryLedgerItem({ item, loading, onEquip, onUse }) {
   const sprite = consumable ? healingPotionIcon : EQUIPMENT_SPRITES[item.equipmentKey];
   return <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px", marginBottom: "8px" }}><div style={{ display: "flex", alignItems: "center", gap: "6px" }}>{sprite && <PixelSprite src={sprite} alt="" size={28} />}<span style={{ color: rarity.color }}>{item.name}{item.quantity > 1 ? ` ×${item.quantity}` : ""}</span></div>{equipment ? <button onClick={() => onEquip(item.id)} disabled={loading} style={{ background: "transparent", border: `1px solid ${CODE_VOICE}`, color: CODE_VOICE }}>Equip</button> : consumable ? <button onClick={() => onUse(item.id)} disabled={loading} style={{ background: "transparent", border: `1px solid ${CODE_VOICE}`, color: CODE_VOICE }}>{isFood ? "Eat" : "Use"}</button> : null}</div>;
 }
+
+function RaceEvolutionTree({ character, onSelect }) {
+  const tree = raceTreeFor(character);
+  if (!tree) return <LedgerSection title="Race Evolution Tree"><div style={{ color: DIM }}>This race's evolution tree has not yet been chronicled.</div></LedgerSection>;
+  const raceTree = normalizeRaceTree(character.raceTree);
+  const evolutionNames = [...Object.values(tree.evolutions.pure), ...Object.values(HYBRID_EVOLUTIONS)].filter((evolution) => raceTree.evolutions.includes(evolution.id)).map((evolution) => evolution.name);
+  return <LedgerSection title="Race Evolution Tree">
+    {evolutionNames.length > 0 && <div style={{ border: `1px solid ${AMBER}`, background: "linear-gradient(135deg, #322617, #18120d)", color: AMBER, padding: "10px", marginBottom: "14px", fontFamily: DISPLAY_FONT }}>Evolutions: {evolutionNames.join(" · ")}</div>}
+    <div style={{ color: SLATE, fontFamily: BODY_FONT, fontSize: "11px", lineHeight: 1.45, marginBottom: "12px" }}>Choices are permanent. Numeric effects update live with the gating stat shown on each card.</div>
+    {Object.keys(TIER_LEVELS).map(Number).map((tier) => {
+      const selectedId = raceTree[`tier${tier}`];
+      return <div key={tier} style={{ marginBottom: "16px" }}>
+        <div style={{ color: AMBER, fontFamily: DISPLAY_FONT, fontSize: "10px", marginBottom: "6px", textTransform: "uppercase" }}>Tier {tier} · Level {TIER_LEVELS[tier]}{tier === 8 ? " · Capstone" : ""}</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(145px, 1fr))", gap: "7px" }}>
+          {optionsForTier(character, tree, tier).map((node) => {
+            const selected = selectedId === node.id;
+            const reason = selected ? null : nodeLockReason(character, tree, node);
+            const rarity = RARITY_TIERS[RACE_TREE_RARITY[tier]];
+            const effects = effectiveNodeEffects(character, tree, node);
+            return <button key={node.id} disabled={selected || !!reason} onClick={() => onSelect(node)} style={{ minHeight: "105px", padding: "9px", textAlign: "left", background: selected ? "linear-gradient(145deg, #30351f, #171a11)" : reason ? "#11100e" : "linear-gradient(145deg, #272016, #17130f)", border: `1px solid ${selected ? CODE_VOICE : reason ? DIM : AMBER}`, opacity: reason ? .5 : 1, cursor: reason || selected ? "default" : "pointer", color: INK }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: "5px", alignItems: "start" }}><b style={{ fontFamily: DISPLAY_FONT, color: selected ? CODE_VOICE : INK, fontSize: "10px" }}>{selected ? "✓ " : ""}{node.name}</b><span style={{ color: rarity.color, border: `1px solid ${rarity.color}`, padding: "1px 3px", fontSize: "7px", textTransform: "uppercase", whiteSpace: "nowrap" }}>{tier === 8 ? "Legendary / Mythic" : rarity.label}</span></div>
+              <div style={{ color: SLATE, fontFamily: BODY_FONT, fontSize: "10px", lineHeight: 1.35, marginTop: "5px" }}>{node.description}</div>
+              {effects.some((effect) => effect.numeric) && <div style={{ color: CODE_VOICE, fontSize: "8.5px", marginTop: "5px" }}>{effects.filter((effect) => effect.numeric).map((effect) => `${effect.key}: ${Number(effect.effectiveValue.toFixed(2))}${effect.unit}${effect.scalingStat ? ` (${effect.scalingStat === "arcane" ? "ARC" : effect.scalingStat.toUpperCase()} scaled)` : ""}`).join(" · ")}</div>}
+              {reason && <div style={{ color: WOUND, fontSize: "8.5px", marginTop: "6px" }}>🔒 {reason}</div>}
+            </button>;
+          })}
+        </div>
+      </div>;
+    })}
+  </LedgerSection>;
+}
+
 
 const FACTION_TIER_COLORS = { Hostile: "#7E1F24", Distrusted: "#B45F3C", Neutral: "#77808C", Favored: "#8FBC7A", Trusted: "#3F8F58", Exalted: "#D6AC45" };
 
