@@ -8,7 +8,7 @@ const tree = RACE_TREES.orc;
 const character = (raceTree = {}, level = 40) => ({
   level,
   startingRegion: 'swamp',
-  attributes: { str: 20, dex: 20, con: 20, int: 20, wis: 20, cha: 20, arcane: 20 },
+  attributes: { str: 20, dex: 20, con: 20, int: 20, wis: 20, cha: 20, arcane: 20, stamina: 20 },
   raceTree,
 });
 
@@ -45,4 +45,11 @@ test('unconditional tiers retain their complete option sets', () => {
       node.tier === tier && (!node.native || blankCharacter.startingRegion === tree.homeRegion));
     assert.deepEqual(optionsForTier(blankCharacter, tree, tier), expected);
   }
+});
+
+test('stamina participates in primary-root highest-stat gating without owning a root', () => {
+  const staminaBuild = character({ tier1: 'STR' });
+  staminaBuild.attributes.stamina = 21;
+
+  assert.equal(nodeLockReason(staminaBuild, tree, tree.nodes.STR1), 'Requires STR to be your highest stat');
 });

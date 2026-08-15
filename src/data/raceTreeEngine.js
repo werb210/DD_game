@@ -1,7 +1,7 @@
 import { HYBRID_EVOLUTIONS, RACE_TREES, TIER_LEVELS, freshRaceTree } from './RACE_TREES.js';
 
 export const RACE_TREE_RARITY = Object.freeze({ 1: 'common', 2: 'common', 3: 'uncommon', 4: 'uncommon', 5: 'rare', 6: 'rare', 7: 'epic', 8: 'legendary' });
-const stats = ['str', 'dex', 'con', 'int', 'wis', 'cha', 'arcane'];
+const stats = ['str', 'dex', 'con', 'int', 'wis', 'cha', 'arcane', 'stamina'];
 export const statForRoot = (tree, root) => root === 'STR' ? 'str' : root === 'DEX' ? 'dex' : tree.magicStat;
 
 export function normalizeRaceTree(value) {

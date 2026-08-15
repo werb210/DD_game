@@ -38,7 +38,7 @@ import { WEAPON_ASPECT_TABLE } from './data/weaponAspectData.js';
 import { RUNE_TABLE } from './data/runeData.js';
 import { FACTION_IDS, adjustFactionReputation, getFactionTier, seedFactionReputation } from './data/factionReputation.js';
 import { DIALOGUE_TONES, clampPersonalAxes, factionDeltaFor, getDisposition, visibleDialogueChoices, withDialogueDefaults } from './data/dialogueConsequences.js';
-import { AVAILABLE_OCCUPATIONS, SLOT_SCALING, WARRIOR_PATHS, WARRIOR_THRESHOLDS, WARRIOR_TITLES, availableWeaponMoves, freshWarrior, freshWarriorChoices, pendingWarriorChoice, rankForWarriorXp, slotIsUnlocked, warriorPassiveBonuses, warriorSlots, warriorXpGain } from './data/warriorOccupation.js';
+import { AVAILABLE_OCCUPATIONS, SLOT_SCALING, WARRIOR_PATHS, WARRIOR_THRESHOLDS, WARRIOR_TITLES, availableWeaponMoves, enemyStrengthRatio, freshWarrior, freshWarriorChoices, pendingWarriorChoice, rankForWarriorXp, slotIsUnlocked, warriorPassiveBonuses, warriorSlots, warriorXpGain } from './data/warriorOccupation.js';
 import { freshRaceTree, HYBRID_EVOLUTIONS, TIER_LEVELS } from './data/RACE_TREES.js';
 import { RACE_TREE_RARITY, effectiveNodeEffects, highestStatTie, nodeLockReason, normalizeRaceTree, optionsForTier, pendingEvolutions, raceTreeFor, statForRoot } from './data/raceTreeEngine.js';
 
@@ -479,7 +479,7 @@ const EQUIPMENT_TABLE = {
   starting_hammer: { slot: "weapon", atkBonus: 1, strRequired: 12 },
 };
 
-// ---- Attribute system. Seven primary attributes drive every derived combat/social number.
+// ---- Attribute system. Eight primary attributes drive every derived combat/social number.
 // Claude never sees or sets attribute values or derived stats — it only ever gets a
 // narrative-flavor summary (condition, notable traits) for color in its prose.
 
@@ -491,10 +491,11 @@ const ATTRIBUTE_DEFS = {
   wis: { label: "Wisdom", short: "WIS" },
   cha: { label: "Charisma", short: "CHA" },
   arcane: { label: "Arcane", short: "ARC" },
+  stamina: { label: "Stamina", short: "STA" },
 };
 
 const ATTRIBUTE_CAP = 99;
-const ATTRIBUTE_POINTS_PER_LEVEL = 5;
+const ATTRIBUTE_POINTS_PER_LEVEL = 4;
 const TRAINING_FATIGUE_COST = 4;
 const RESOURCE_TICK_MS = 7 * 60 * 1000;
 
@@ -508,7 +509,8 @@ function trainingCostFor(targetScore) {
 function validTrainableStats(entries) {
   if (!Array.isArray(entries)) return [];
   return entries.flatMap((entry) => {
-    const stat = typeof entry?.stat === "string" ? entry.stat.toLowerCase() : "";
+    const rawStat = typeof entry?.stat === "string" ? entry.stat.toLowerCase() : "";
+    const stat = rawStat === "sta" ? "stamina" : rawStat === "arc" ? "arcane" : rawStat;
     const maxLevel = Math.floor(Number(entry?.maxLevel));
     return ATTRIBUTE_DEFS[stat] && Number.isFinite(maxLevel)
       ? [{ stat, maxLevel: clamp(maxLevel, 1, ATTRIBUTE_CAP) }]
@@ -516,7 +518,17 @@ function validTrainableStats(entries) {
   });
 }
 
-const initialAttributes = { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10, arcane: 10 };
+const initialAttributes = { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10, arcane: 10, stamina: 10 };
+
+// First-pass resource formulas: deliberately centralized and open to tuning after playtests.
+const maxStaminaFor = (attributes) => 50 + (attributes.stamina || 10) * 3;
+const travelTimeMultiplierFor = (attributes) => 1 - Math.min(0.3, Math.max(0, ((attributes.stamina || 10) - 10) * 0.01));
+function armorDefenseFor(character) {
+  const armor = character.equipped?.armor;
+  const definition = armor ? EQUIPMENT_TABLE[armor.equipmentKey] : null;
+  return definition ? Math.round(definition.defBonus * RARITY_TIERS[rarityOf(armor)].statMult) : 0;
+}
+const maxPoiseFor = (character) => 20 + character.attributes.str * 0.7 + character.attributes.con * 0.5 + (character.attributes.stamina || 10) * 0.6 + armorDefenseFor(character) * 1.5;
 
 // Race is pure narrative flavor — no stat effect at all. It exists so Claude has
 // something true and stable to reference in narration, not to give anyone a mechanical
@@ -933,9 +945,11 @@ function getEffectiveStats(character, encounterLocation = null) {
   const isWildernessEncounter = encounterLocation?.type === "point_of_interest";
   const tundraDefense = hasRegionalPassive(character, "cold_resistance") && encounterLocation?.regionId === "tundra" ? 3 : 0;
   const wildernessDodge = hasRegionalPassive(character, "wilderness_step") && isWildernessEncounter ? 5 : 0;
+  const composureAtkMultiplier = character.composureBrokenTurns > 0 ? 0.85 : 1;
+  const composureDefMultiplier = character.composureBrokenTurns > 0 ? 0.9 : 1;
   return {
-    atk: Math.max(0, base.attack + weaponBonus + occupation.atk - (character.hunger <= 0 ? 3 : character.hunger < 30 ? 1 : 0)),
-    def: base.defense + armorBonus + shieldBonus + occupation.def + (has("iron_will") ? 2 : 0) + tundraDefense,
+    atk: Math.max(0, Math.floor((base.attack + weaponBonus + occupation.atk - (character.hunger <= 0 ? 3 : character.hunger < 30 ? 1 : 0)) * composureAtkMultiplier)),
+    def: Math.floor((base.defense + armorBonus + shieldBonus + occupation.def + (has("iron_will") ? 2 : 0) + tundraDefense) * composureDefMultiplier),
     maxHp: base.maxHp + occupation.maxHp,
     critChance: Math.max(0, base.critChance + occupation.critChance - (character.fatigue < 30 ? 5 : 0)),
     dodgeChance: Math.max(0, base.dodgeChance + wildernessDodge - (character.hunger <= 0 ? 10 : 0) - (character.fatigue < 30 ? 10 : 0)),
@@ -1035,6 +1049,11 @@ const initialCharacter = {
   maxHunger: 100,
   fatigue: 100,
   maxFatigue: 100,
+  currentStamina: 80,
+  maxStamina: 80,
+  currentPoise: 38,
+  maxPoise: 38,
+  composureBrokenTurns: 0,
   timedEffects: {},
   forcedRest: false,
   inventory: [
@@ -1163,7 +1182,7 @@ const TUTORIAL_STEPS = [
   },
   {
     title: "Attributes",
-    body: "You have seven attributes: STR, DEX, CON, INT, WIS, CHA, ARC. Every level banks 5 skill points. Trusted trainers can turn those points into growth, up to two lessons per in-game day, provided you can pay their fee.",
+    body: "You have eight attributes: STR, DEX, CON, INT, WIS, CHA, ARC, STA. Every level banks 4 skill points. Trusted trainers can turn those points into growth, up to two lessons per in-game day, provided you can pay their fee.",
   },
   {
     title: "Abilities",
@@ -1358,8 +1377,8 @@ Respond with ONLY valid JSON, no markdown fences, no preamble:
   "narration": "string",
   "stateUpdates": {
     "location": null,
-    "newNPCs": [{"name": "string", "memory": "short fact", "roles": "optional array using only noble|official|merchant; include every role clearly established by the fiction", "traits": "array of 1-3 strings from the fixed trait list below, optional", "goal": "short string, what this NPC wants, optional", "secret": "short string, something hidden about them, optional", "isTrainer": "boolean, optional", "trainerSubtype": "standard|deepsinger, optional", "trainableStats": "optional array of {stat: STR|DEX|CON|INT|WIS|CHA|ARC, maxLevel: integer}; maxLevel must equal this NPC's own ability", "trustRequired": "integer, optional; minimum trust for instruction"}],
-    "npcUpdates": [{"id": "string — exact existing npc id from WORLD STATE", "name": "string, optional — only when this NPC's real name is genuinely revealed in the fiction for the first time", "memory": "updated fact, optional", "traits": "array of 1-3 strings from the fixed trait list, optional — only include if it should change", "goal": "short string, optional — only include if it changes", "secret": "short string, optional — only include if newly revealed or changed", "isTrainer": "boolean, optional", "trainerSubtype": "standard|deepsinger, optional", "trainableStats": "optional array of {stat: STR|DEX|CON|INT|WIS|CHA|ARC, maxLevel: integer}", "trustRequired": "integer, optional"}],
+    "newNPCs": [{"name": "string", "memory": "short fact", "roles": "optional array using only noble|official|merchant; include every role clearly established by the fiction", "traits": "array of 1-3 strings from the fixed trait list below, optional", "goal": "short string, what this NPC wants, optional", "secret": "short string, something hidden about them, optional", "isTrainer": "boolean, optional", "trainerSubtype": "standard|deepsinger, optional", "trainableStats": "optional array of {stat: STR|DEX|CON|INT|WIS|CHA|ARC|STA, maxLevel: integer}; maxLevel must equal this NPC's own ability", "trustRequired": "integer, optional; minimum trust for instruction"}],
+    "npcUpdates": [{"id": "string — exact existing npc id from WORLD STATE", "name": "string, optional — only when this NPC's real name is genuinely revealed in the fiction for the first time", "memory": "updated fact, optional", "traits": "array of 1-3 strings from the fixed trait list, optional — only include if it should change", "goal": "short string, optional — only include if it changes", "secret": "short string, optional — only include if newly revealed or changed", "isTrainer": "boolean, optional", "trainerSubtype": "standard|deepsinger, optional", "trainableStats": "optional array of {stat: STR|DEX|CON|INT|WIS|CHA|ARC|STA, maxLevel: integer}", "trustRequired": "integer, optional"}],
     "reputationDelta": "string or null",
     "worldFacts": ["short new persistent facts, if any"]
   },
@@ -2041,6 +2060,27 @@ export default function DMMemoryTest() {
     return () => window.clearInterval(timer);
   }, [saveChecked, needsIdentity, pauseOpen, character.isDead]);
 
+  // Stamina is intentionally a fast, short-horizon resource. Outside combat it fills
+  // over a handful of turns/minutes, entirely independently from Fatigue recovery.
+  useEffect(() => {
+    if (!saveChecked || needsIdentity || pauseOpen || combat || character.isDead) return undefined;
+    const timer = window.setInterval(() => setCharacter((current) => ({
+      ...current,
+      currentStamina: Math.min(current.maxStamina, (current.currentStamina ?? current.maxStamina) + current.maxStamina * 0.2),
+    })), 15000);
+    return () => window.clearInterval(timer);
+  }, [saveChecked, needsIdentity, pauseOpen, combat, character.isDead]);
+
+  // Keep saved resource maxima live when an attribute is trained or armor changes.
+  useEffect(() => {
+    setCharacter((current) => {
+      const maxStamina = maxStaminaFor(current.attributes);
+      const maxPoise = maxPoiseFor(current);
+      if (current.maxStamina === maxStamina && current.maxPoise === maxPoise) return current;
+      return { ...current, maxStamina, currentStamina: clamp(current.currentStamina ?? maxStamina, 0, maxStamina), maxPoise, currentPoise: clamp(current.currentPoise ?? maxPoise, 0, maxPoise) };
+    });
+  }, [character.attributes, character.equipped]);
+
   function pushDebugEntry(actionLabel, info) {
     setDebugLog((log) => {
       const entry = {
@@ -2120,7 +2160,7 @@ export default function DMMemoryTest() {
       // single attack number, so it resets to the standard starting attributes
       // rather than guessing — the alternative (crashing on undefined attributes)
       // is worse than a one-time reset for a prototype save.
-      const migratedAttributes = saved.character.attributes || { ...initialAttributes };
+      const migratedAttributes = { ...initialAttributes, ...(saved.character.attributes || {}) };
       const migratedPendingPoints =
         typeof saved.character.pendingAttributePoints === "number"
           ? saved.character.pendingAttributePoints
@@ -2141,6 +2181,9 @@ export default function DMMemoryTest() {
         maxHunger: 100,
         fatigue: clamp(saved.character.fatigue ?? 100, 0, 100),
         maxFatigue: 100,
+        maxStamina: maxStaminaFor(migratedAttributes),
+        currentStamina: clamp(saved.character.currentStamina ?? maxStaminaFor(migratedAttributes), 0, maxStaminaFor(migratedAttributes)),
+        composureBrokenTurns: saved.character.composureBrokenTurns || 0,
         timedEffects: saved.character.timedEffects || {},
         forcedRest: saved.character.forcedRest || false,
         startingRegion: inferredStartingRegion,
@@ -2158,6 +2201,8 @@ export default function DMMemoryTest() {
         equipped: { weapon: null, armor: null, shield: null, ...(saved.character.equipped || {}) },
         attributes: migratedAttributes,
         inventory: migratedInventory,
+        maxPoise: saved.character.maxPoise || 38,
+        currentPoise: saved.character.currentPoise ?? saved.character.maxPoise ?? 38,
       });
     }
     if (saved.quests) setQuests(saved.quests);
@@ -2383,13 +2428,13 @@ export default function DMMemoryTest() {
   }
 
   function submitIdentity(identity) {
-    const { traits, formativeAnswers, occupation, ...identityDetails } = identity;
+    const { traits, formativeAnswers, occupation, allocatedAttributes, ...identityDetails } = identity;
     if (identityMode === "new") {
       const startingRegion = rollStartingRegion(identityDetails.race);
       const regionalPassive = { ...REGIONS_TABLE[startingRegion].passiveAbility };
       const identityWithRegion = { ...identityDetails, startingRegion, regionalPassive };
       const background = BACKGROUND_OPTIONS[identityDetails.background] || BACKGROUND_OPTIONS.farmer;
-      const startingAttributes = { ...initialAttributes };
+      const startingAttributes = { ...initialAttributes, ...(allocatedAttributes || {}) };
       const creationBonuses = combinedStatBonus(RACE_STAT_BONUS_TABLE[identityDetails.race], BACKGROUND_STAT_BONUS_TABLE[identityDetails.background] || background.bonus);
       Object.entries(creationBonuses).forEach(([key, amount]) => {
         startingAttributes[key] = Math.min(ATTRIBUTE_CAP, startingAttributes[key] + amount);
@@ -2397,7 +2442,10 @@ export default function DMMemoryTest() {
       const startingGold = 10 + (background.startingGold || 0);
       const startingInventory = buildStartingInventory(identityDetails.weapon, identityDetails.background);
       const primaryOccupation = { id: occupation, rank: 1, xp: 0 };
-      const openingCharacter = { ...initialCharacter, attributes: startingAttributes, gold: startingGold, inventory: startingInventory, identity: identityWithRegion, traits, formativeAnswers, startingRegion, regionalPassive, factionReputation: seedFactionReputation(startingRegion, identityDetails.homeFactionId), occupations: { primary: primaryOccupation, secondary: null, tertiary: null }, occupationAbilities: occupation === "warrior" ? ["brace"] : [] };
+      const maxStamina = maxStaminaFor(startingAttributes);
+      const openingBase = { ...initialCharacter, attributes: startingAttributes, gold: startingGold, inventory: startingInventory, identity: identityWithRegion, traits, formativeAnswers, startingRegion, regionalPassive, factionReputation: seedFactionReputation(startingRegion, identityDetails.homeFactionId), occupations: { primary: primaryOccupation, secondary: null, tertiary: null }, occupationAbilities: occupation === "warrior" ? ["brace"] : [] };
+      const maxPoise = maxPoiseFor(openingBase);
+      const openingCharacter = { ...openingBase, maxStamina, currentStamina: maxStamina, maxPoise, currentPoise: maxPoise };
       const startingLocationId = REGIONS_TABLE[startingRegion].hubSettlement;
       const openingWorldState = { ...initialWorldState, day: 1, locationId: startingLocationId, zoneId: defaultZoneForLocation(startingLocationId), locations: cloneWorldMap(startingLocationId) };
       setCharacter(openingCharacter);
@@ -2722,7 +2770,7 @@ export default function DMMemoryTest() {
           unbroken: false,
         });
         combatStartedThisTurn = true;
-        setCharacter((current) => { const reduction = warriorPassiveBonuses(current).combatFatigueReduction; const fatigue = clamp(current.fatigue - Math.max(0, 2 - reduction), 0, current.maxFatigue); return { ...current, hunger: clamp(current.hunger - 3, 0, current.maxHunger), fatigue, forcedRest: current.forcedRest || fatigue === 0 }; });
+        setCharacter((current) => { const reduction = warriorPassiveBonuses(current).combatFatigueReduction; const fatigue = clamp(current.fatigue - Math.max(0, 2 - reduction), 0, current.maxFatigue); return { ...current, hunger: clamp(current.hunger - 3, 0, current.maxHunger), fatigue, forcedRest: current.forcedRest || fatigue === 0, currentPoise: maxPoiseFor(current), maxPoise: maxPoiseFor(current), composureBrokenTurns: 0 }; });
         pushSystemLine(`⚔ A ${enemyDef.name.toLowerCase()} attacks! (${severity.toUpperCase()} threat · HP ${enemyDef.hp}, ATK ${enemyDef.attack}, DEF ${enemyDef.defense})`);
       } else if (event.type === "loot") {
         // Only recognize consumableKind/equipmentKey if they're one of the fixed,
@@ -2860,7 +2908,8 @@ export default function DMMemoryTest() {
         setShop({ npcId: event.id, merchantType: event.merchantType });
       } else if (event.type === "training_offer") {
         const trainer = worldState.npcs.find((n) => n.id === event.id);
-        const stat = typeof event.stat === "string" ? event.stat.toLowerCase() : "";
+        const rawStat = typeof event.stat === "string" ? event.stat.toLowerCase() : "";
+        const stat = rawStat === "sta" ? "stamina" : rawStat === "arc" ? "arcane" : rawStat;
         const lesson = trainer?.trainableStats?.find((entry) => entry.stat === stat);
         if (!trainer?.isTrainer || !lesson || (trainer.trust || 0) < (trainer.trustRequired || 0) || trainer.taughtOut?.[stat]) {
           pushSystemLine(`⚠ Invalid training offer was ignored.`);
@@ -3063,13 +3112,13 @@ export default function DMMemoryTest() {
           revealArrival(next.locations, next.locationId);
           if (WORLD_MAP[next.locationId]) {
             const destination = next.locations[next.locationId];
-            const days = next.locations[prevLocationId]?.regionId === destination.regionId ? 1 : 3;
+            const baseDays = next.locations[prevLocationId]?.regionId === destination.regionId ? 1 : 3;
+            const travelMultiplier = travelTimeMultiplierFor(character.attributes);
+            const days = baseDays * travelMultiplier;
             next.day += days;
             setCharacter((current) => { const fatigue = clamp(current.fatigue - 3, 0, current.maxFatigue); return { ...current, hunger: clamp(current.hunger - 2, 0, current.maxHunger), fatigue, forcedRest: current.forcedRest || fatigue === 0 }; });
             setTrainingOffer(null);
-            pushSystemLine(days === 1
-              ? `→ A day passes reaching ${destination.name}.`
-              : `→ Three days pass on the road to ${destination.name}.`);
+            pushSystemLine(`→ ${(days * 24).toFixed(1)} hours pass reaching ${destination.name} (${Math.round((1 - travelMultiplier) * 100)}% Stamina speed bonus).`);
           }
         }
 
@@ -3187,6 +3236,7 @@ export default function DMMemoryTest() {
       if (npc.escalationBehavior === "attack") {
         const enemyDef = ENEMY_TABLE.bandit;
         setCombat({ enemyType: "bandit", enemy: { name: npc.name, hp: enemyDef.hp, maxHp: enemyDef.hp, attack: enemyDef.attack, defense: enemyDef.defense }, npcId: npc.id, severity: severityFor(enemyDef), threatScore: threatScoreFor(enemyDef), secondWindUsed: false, openingStrikeUsed: false, guardUpUsed: false, oathStrikeUsed: false, warriorSecondWindUsed: false, unbroken: false });
+        setCharacter((current) => ({ ...current, maxPoise: maxPoiseFor(current), currentPoise: maxPoiseFor(current), composureBrokenTurns: 0 }));
         pushSystemLine(`⚔ ${npc.name} turns the confrontation violent.`);
       } else if (npc.escalationBehavior === "flee_and_report") {
         setWorldState((current) => ({ ...current, worldFacts: [...current.worldFacts, `Witnessed incident: ${npc.name} fled to report the player's hostile conduct.`] }));
@@ -3242,10 +3292,22 @@ export default function DMMemoryTest() {
 
     let enemy = tickStatuses({ ...combat.enemy });
     let nextCharacter = { ...character };
+    const moveName = actionType.startsWith("move:") ? actionType.slice(5) : "";
+    const heavyMove = /heavy|overhead|sunder|whirlwind|haymaker|fortress/i.test(moveName);
+    const staminaCost = actionType === "power_strike" || heavyMove ? 18
+      : actionType === "attack" || actionType.startsWith("move:") || actionType === "oath_strike" || actionType === "warlord_command" ? 10
+      : actionType === "defend" || actionType === "brace" || actionType === "guard_up" ? 5 : 3;
+    if ((nextCharacter.currentStamina ?? nextCharacter.maxStamina) < staminaCost) {
+      pushSystemLine(`Not enough Stamina (need ${staminaCost}).`);
+      setLoading(false);
+      return;
+    }
+    nextCharacter.currentStamina = Math.max(0, (nextCharacter.currentStamina ?? nextCharacter.maxStamina) - staminaCost);
     const facts = { action: actionType };
     // Always fight with gear-adjusted stats, never the raw base numbers — this is the
     // only place attack/defense bonuses from equipped items take effect.
     const effStats = getEffectiveStats(nextCharacter, worldState.locations[worldState.locationId]);
+    if (nextCharacter.composureBrokenTurns > 0) nextCharacter.composureBrokenTurns -= 1;
     const playerHitChance = hitChanceFor(effStats.accuracy, 0);
     const enemyBaseHitChance = clamp(hitChanceFor(70, effStats.dodgeChance * 1.2), 10, 90);
     const warriorSlot = warriorSlots(nextCharacter)[0];
@@ -3359,6 +3421,25 @@ export default function DMMemoryTest() {
         facts.playerHpRemaining = nextCharacter.hp;
       }
     }
+    // Every damaging enemy hit also pressures Poise using the exact shared ratio owned
+    // by Occupation XP. Missing/dodged turns instead grant a tunable 10% passive regen.
+    const maxPoise = maxPoiseFor(nextCharacter);
+    nextCharacter.maxPoise = maxPoise;
+    if ((facts.enemyDamageDealt || 0) > 0) {
+      const enemyDef = ENEMY_TABLE[combat.enemyType] || ENEMY_TABLE.goblin;
+      const poiseDamage = facts.enemyDamageDealt * enemyStrengthRatio(enemyDef.challengeRating, nextCharacter.level);
+      nextCharacter.currentPoise = Math.max(0, (nextCharacter.currentPoise ?? maxPoise) - poiseDamage);
+      facts.poiseDamage = poiseDamage;
+      if (nextCharacter.currentPoise <= 0) {
+        nextCharacter.currentPoise = maxPoise * 0.5;
+        nextCharacter.composureBrokenTurns = 2;
+        facts.composureBroken = true;
+      }
+    } else {
+      nextCharacter.currentPoise = Math.min(maxPoise, (nextCharacter.currentPoise ?? maxPoise) + maxPoise * 0.1);
+    }
+    // A little turn-based recovery keeps Stamina useful even in longer encounters.
+    nextCharacter.currentStamina = Math.min(nextCharacter.maxStamina, nextCharacter.currentStamina + nextCharacter.maxStamina * 0.12);
     facts.playerDefeated = nextCharacter.hp <= 0;
 
     // Resolve rewards / end-of-combat state changes deterministically before narrating.
@@ -3918,6 +3999,9 @@ export default function DMMemoryTest() {
             <div style={{ color: character.hp <= characterEffStats.maxHp * .3 ? WOUND : INK }}>HP {character.hp}/{characterEffStats.maxHp}</div><StatBar value={character.hp} max={characterEffStats.maxHp} color={BLOOD} />
             <div style={{ marginTop: "8px", color: AMBER }}>Hunger {Math.floor(character.hunger)}/{character.maxHunger}</div><StatBar value={character.hunger} max={character.maxHunger} color="#C58A35" />
             <div style={{ marginTop: "8px", color: SLATE }}>Fatigue {Math.floor(character.fatigue)}/{character.maxFatigue}</div><StatBar value={character.fatigue} max={character.maxFatigue} color="#77808C" />
+            <div style={{ marginTop: "8px", color: CODE_VOICE }}>Stamina {Math.floor(character.currentStamina)}/{Math.floor(character.maxStamina)}</div><StatBar value={character.currentStamina} max={character.maxStamina} color="#4EAD8B" />
+            <div style={{ marginTop: "8px", color: "#A78BD4" }}>Poise {Math.floor(character.currentPoise)}/{Math.floor(character.maxPoise)}</div><StatBar value={character.currentPoise} max={character.maxPoise} color="#A78BD4" />
+            {character.composureBrokenTurns > 0 && <div role="status" style={{ marginTop: "8px", color: WOUND, border: `1px solid ${WOUND}`, padding: "5px" }}>💥 Composure Broken · −15% ATK · −10% DEF · {character.composureBrokenTurns} turns</div>}
             <div style={{ marginTop: "9px", color: SLATE }}>XP {character.xp}/{xpToNextLevel(character.level)} · ATK {characterEffStats.atk} · DEF {characterEffStats.def} · Crit {characterEffStats.critChance.toFixed(0)}% · Dodge {characterEffStats.dodgeChance.toFixed(0)}%</div>
             <StatBar value={character.xp} max={xpToNextLevel(character.level)} color={AMBER} height={5} />
           </LedgerSection>
@@ -3983,9 +4067,11 @@ function CharacterCreationScreen({ mode, onSubmit }) {
   const [weapon, setWeapon] = useState("dagger");
   const [voice, setVoice] = useState(null);
   const [occupation, setOccupation] = useState(null);
+  const [allocatedAttributes, setAllocatedAttributes] = useState({ ...initialAttributes });
+  const creationPointsLeft = ATTRIBUTE_POINTS_PER_LEVEL - Object.keys(ATTRIBUTE_DEFS).reduce((sum, key) => sum + allocatedAttributes[key] - initialAttributes[key], 0);
 
   const allMemoriesAnswered = FORMATIVE_MEMORY_QUESTIONS.every((question) => formativeSelections[question.id] !== undefined);
-  const canSubmit = name.trim().length > 0 && race && heightInches !== null && background && occupation && allMemoriesAnswered;
+  const canSubmit = name.trim().length > 0 && race && heightInches !== null && background && occupation && allMemoriesAnswered && (mode === "migrate" || creationPointsLeft === 0);
   const GENDER_OPTIONS = ["Male", "Female", "Nonbinary", "Prefer not to say"];
   const raceBonus = RACE_STAT_BONUS_TABLE[race] || {};
   const backgroundBonus = background ? (BACKGROUND_STAT_BONUS_TABLE[background] || BACKGROUND_OPTIONS[background]?.bonus || {}) : {};
@@ -4145,6 +4231,20 @@ function CharacterCreationScreen({ mode, onSubmit }) {
           ))}
         </div>
 
+        {mode !== "migrate" && (
+          <div style={{ marginBottom: "22px", padding: "12px", border: `1px solid ${AMBER}`, background: "#17120e" }}>
+            {fieldLabel(`Allocate Core Stats — ${creationPointsLeft} points left`)}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "7px" }}>
+              {Object.entries(ATTRIBUTE_DEFS).map(([key, definition]) => (
+                <div key={key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", color: INK }}>
+                  <span>{definition.short} · {definition.label}</span>
+                  <span><button onClick={() => setAllocatedAttributes((current) => ({ ...current, [key]: Math.max(10, current[key] - 1) }))} disabled={allocatedAttributes[key] <= 10}>−</button> <b style={{ color: AMBER }}>{allocatedAttributes[key]}</b> <button onClick={() => setAllocatedAttributes((current) => ({ ...current, [key]: current[key] + 1 }))} disabled={creationPointsLeft <= 0}>+</button></span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {mode !== "migrate" && allMemoriesAnswered && (
           <div style={{ marginBottom: "22px" }}>
             {fieldLabel("Starting Weapon")}
@@ -4179,7 +4279,7 @@ function CharacterCreationScreen({ mode, onSubmit }) {
               Object.entries(option.traits).forEach(([trait, amount]) => { traits[trait] += amount; });
               return option.label;
             });
-            onSubmit({ name: name.trim(), gender, age: age.trim(), appearance: { heightInches, build, eyeColor, hairColor, distinguishingFeatures: distinguishingFeatures.trim() }, race, background, weapon, voice, occupation, traits, formativeAnswers });
+            onSubmit({ name: name.trim(), gender, age: age.trim(), appearance: { heightInches, build, eyeColor, hairColor, distinguishingFeatures: distinguishingFeatures.trim() }, race, background, weapon, voice, occupation, traits, formativeAnswers, allocatedAttributes });
           }}
           disabled={!canSubmit}
           style={{ background: canSubmit ? `linear-gradient(180deg, ${BLOOD} 0%, #4A1620 100%)` : "transparent", border: `1px solid ${canSubmit ? BLOOD : "#4A3F2C"}`, color: canSubmit ? INK : DIM, padding: "12px 24px", fontFamily: DISPLAY_FONT, fontSize: "13px", letterSpacing: "0.05em", textTransform: "uppercase", cursor: canSubmit ? "pointer" : "default", borderRadius: "2px", width: "100%" }}

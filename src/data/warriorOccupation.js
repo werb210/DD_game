@@ -37,9 +37,15 @@ export function slotIsUnlocked(character, slot) {
 export function warriorSlots(character) {
   return OCCUPATION_SLOTS.filter((slot) => character.occupations?.[slot]?.id === "warrior");
 }
+// Shared challenge ratio for every system that scales against enemy strength.
+// Occupation XP owns this formula; consumers such as Poise must call this helper
+// rather than quietly growing a second, divergent implementation.
+export function enemyStrengthRatio(challengeRating, playerLevel) {
+  return Math.max(0.25, Math.min(2, challengeRating / Math.max(1, playerLevel)));
+}
 export function warriorXpGain({ damage, maximumDamage, challengeRating, playerLevel, slot }) {
   const quality = Math.max(0.2, Math.min(1, damage / Math.max(1, maximumDamage)));
-  const strength = Math.max(0.25, Math.min(2, challengeRating / Math.max(1, playerLevel)));
+  const strength = enemyStrengthRatio(challengeRating, playerLevel);
   return 10 * quality * strength * SLOT_SCALING[slot];
 }
 export function rankForWarriorXp(xp) { return xp >= 1200 ? 4 : xp >= 500 ? 3 : xp >= 150 ? 2 : 1; }
