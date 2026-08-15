@@ -13,8 +13,8 @@ export function optionsForTier(character, tree, tier) {
   return Object.values(tree.nodes).filter((node) => {
     if (node.tier !== tier) return false;
     if (node.native && character.startingRegion !== tree.homeRegion) return false;
-    if (tier === 2) return node.parent === raceTree.tier1;
-    if (tier === 3) return node.native || node.parent === raceTree.tier2;
+    if (tier === 2) return !raceTree.tier1 || node.parent === raceTree.tier1;
+    if (tier === 3) return node.native || !raceTree.tier2 || node.parent === raceTree.tier2;
     return true;
   });
 }
@@ -22,6 +22,7 @@ export function optionsForTier(character, tree, tier) {
 export function nodeLockReason(character, tree, node) {
   const raceTree = normalizeRaceTree(character.raceTree);
   if (raceTree[`tier${node.tier}`]) return raceTree[`tier${node.tier}`] === node.id ? null : 'Another path is permanently selected';
+  if ((node.tier === 2 || node.tier === 3) && !raceTree[`tier${node.tier - 1}`]) return `Pick a Tier ${node.tier - 1} path first`;
   if ((character.level || 1) < TIER_LEVELS[node.tier]) return `Requires Level ${TIER_LEVELS[node.tier]}`;
   if (node.tier > 1 && !raceTree[`tier${node.tier - 1}`]) return `Requires a Tier ${node.tier - 1} choice`;
   if (node.tier === 8 && !raceTree.capstoneUnlocked) return 'Requires race quest completion and faction-leader teaching';
