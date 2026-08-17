@@ -306,6 +306,12 @@ const DIALOGUE_STAT_CHECK_TYPES = Object.freeze({
   "Reasoning (INT)": "discern",
 });
 
+function fallbackDialogueStat(tag) {
+  if (tag === "Aggressive") return "Intimidation (STR)";
+  if (tag === "Deceptive") return "Deception (CHA)";
+  return "Persuasion (CHA)";
+}
+
 function normalizeSuggestedActions(actions, worldState, character, npcId = null) {
   if (!Array.isArray(actions)) return [];
   return actions.map((action) => {
@@ -316,16 +322,24 @@ function normalizeSuggestedActions(actions, worldState, character, npcId = null)
       : action;
     if (!source || typeof source.text !== "string" || !source.text.trim()) return null;
     const tag = DIALOGUE_TONES.includes(source.tag) ? source.tag : "Neutral";
-    const checkType = source.check && typeof source.check.stat === "string"
-      ? DIALOGUE_STAT_CHECK_TYPES[source.check.stat]
+    const intent = source.intent === "Attempt" ? "Attempt" : "Expression";
+    const suppliedCheck = source.check && typeof source.check.stat === "string"
+      ? source.check
+      : null;
+    const effectiveCheck = intent === "Attempt" && source.check == null
+      ? { stat: fallbackDialogueStat(tag) }
+      : suppliedCheck;
+    const checkType = effectiveCheck
+      ? DIALOGUE_STAT_CHECK_TYPES[effectiveCheck.stat]
       : null;
     const odds = checkType ? skillCheckOdds({ checkType, npcId }, worldState, character) : null;
     return {
       text: source.text.trim(),
       tag,
+      intent,
       // Never retain the narrator's placeholder chance. A recognized stat is
       // hydrated exclusively by the same code-owned odds resolver as dialogue_offer.
-      check: odds ? { stat: source.check.stat, chance: odds.chance, checkType, difficultyTier: odds.difficultyTier } : null,
+      check: odds ? { stat: effectiveCheck.stat, chance: odds.chance, checkType, difficultyTier: odds.difficultyTier } : null,
     };
   }).filter(Boolean);
 }
@@ -1398,12 +1412,12 @@ Respond with ONLY valid JSON, no markdown fences, no preamble:
     ,{"type": "dialogue_offer", "npcId": "exact existing NPC id", "choices": [{"text": "string", "tag": "Compassionate|Aggressive|Charming|Logical|Suspicious|Neutral|Deceptive", "intent": "Attempt|Expression", "axis": {"compassion": 0, "honesty": 0, "diplomacy": 0}, "trf": {"trust": 0, "respect": 0, "fear": 0}, "requiresGoodwill": "optional boolean", "allowedWhenHostile": "optional boolean", "significant": "optional boolean", "statCheck": "optional object replacing axis/trf: {stat: Persuasion (CHA)|Intimidation (STR)|Deception (CHA)|Insight (WIS)|Reasoning (INT), axisSuccess, axisFail, trfSuccess, trfFail}"}]}
   ],
   "suggestedActions": [
-    {"text": "string", "tag": "Compassionate|Aggressive|Charming|Logical|Suspicious|Neutral|Deceptive", "check": {"stat": "Persuasion (CHA)|Intimidation (STR)|Deception (CHA)|Insight (WIS)|Reasoning (INT)", "chance": 0}},
-    {"text": "string", "tag": "Compassionate|Aggressive|Charming|Logical|Suspicious|Neutral|Deceptive", "check": null}
+    {"text": "string", "tag": "Compassionate|Aggressive|Charming|Logical|Suspicious|Neutral|Deceptive", "intent": "Attempt|Expression", "check": {"stat": "Persuasion (CHA)|Intimidation (STR)|Deception (CHA)|Insight (WIS)|Reasoning (INT)", "chance": 0}},
+    {"text": "string", "tag": "Compassionate|Aggressive|Charming|Logical|Suspicious|Neutral|Deceptive", "intent": "Attempt|Expression", "check": null}
   ]
 }
 
-Every suggestedActions entry must be an object with text, exactly one listed tone tag, and check. Use check: null unless the action is an uncertain, consequential attempt. When a check applies, identify the relevant stat and always send chance: 0 as a placeholder signal; game code discards that number and computes the authoritative percentage. Never predict the displayed odds or the roll result.
+Every suggestedActions entry must be an object with text, exactly one listed tone tag, intent, and check. Classify EVERY entry with intent "Attempt" or "Expression", using the same definition as dialogue_offer: an Attempt tries to change the NPC's mind or behavior, while an Expression communicates how the player feels without asking the NPC to act against their inclination. If intent is "Attempt", you MUST include a check naming a recognized stat, UNLESS the specific line genuinely has nothing at stake (e.g. a low-effort Attempt with no real consequence either way — this should be rare). If intent is "Expression", check must be null UNLESS the specific line's outcome is genuinely uncertain and worth gambling on (e.g. a Logical line asking for restricted information). When a check applies, always send chance: 0 as a placeholder signal; game code discards that number and computes the authoritative percentage. Never predict the displayed odds or the roll result.
 
 For "location": use null if unchanged or {"existingId": "exact id"} for every real named settlement or point of interest in WORLD MAP. The rare {"newDisplayName": "string"} path is reserved only for minor, disposable, scene-specific flavor spots such as a particular room, back alley, or campsite. Never use newDisplayName to create a settlement, landmark, dungeon, or persistent travel destination, and never use it for a named WORLD MAP place.
 
@@ -1412,7 +1426,7 @@ Emit location_hint only when the fiction clearly gives the player a real, action
 Use dialogue_offer whenever an existing named NPC presents discrete replies. These are the live conversation choices shown to the player, not suggestedActions. Follow every rule below:
 - Give EVERY choice exactly one (never zero or multiple) tone tag from: Compassionate, Aggressive, Charming, Logical, Suspicious, Neutral, Deceptive.
 - Flag EVERY choice with intent "Attempt" or "Expression". An Attempt tries to change the NPC's mind or behavior (commonly Charming, Aggressive pressure, or Deceptive). An Expression communicates how the player feels or responds without asking the NPC to act against their inclination (commonly Compassionate, Logical, Suspicious, or Neutral). Classify the actual choice, not merely its tone.
-- Decide per choice whether uncertainty and stakes warrant a stat check. Attempts typically warrant one and Expressions typically do not, but this is guidance rather than a hard mapping. If warranted, include statCheck and name exactly one relevant stat, such as "Persuasion (CHA)" or "Intimidation (STR)". NEVER provide a chance/percentage, roll, success, or failure: game code calculates the odds and resolves the roll. You may author the existing success/failure axis and relationship consequences, but not the result.
+- If intent is "Attempt", you MUST include a statCheck naming a recognized stat, UNLESS the specific line genuinely has nothing at stake (e.g. a low-effort Attempt with no real consequence either way — this should be rare). If intent is "Expression", statCheck must be null UNLESS the specific line's outcome is genuinely uncertain and worth gambling on (e.g. a Logical line asking for restricted information). NEVER provide a chance/percentage, roll, success, or failure: game code calculates the odds and resolves the roll. You may author the existing success/failure axis and relationship consequences, but not the result.
 - Vary choice count with the scene. Aim for 4-6 distinct, substantive choices when the NPC or situation has personality, goals, secrets, relationships, or meaningful stakes. Do not default to exactly three. Fewer choices are appropriate only for a truly minor or inconsequential interaction.
 - Ground the choices in NARRATOR NPC CONTEXT: use that NPC's existing memory, traits/personality, goal, secret (without revealing it before the fiction earns it), trust, respect, fear, and personalAxes whenever present. Do not invent missing profile data.
 Every choice must still include hand-authored axis/trf effects (or the success/failure effects inside statCheck). Always include at least one Neutral leave choice with allowedWhenHostile true. Do not derive effects from tags.
@@ -2945,15 +2959,19 @@ export default function DMMemoryTest() {
       } else if (event.type === "dialogue_offer") {
         const npc = worldState.npcs.find((entry) => entry.id === event.npcId);
         const choices = Array.isArray(event.choices) ? event.choices.map((choice) => {
-          if (!choice?.statCheck) return choice;
-          const checkType = DIALOGUE_STAT_CHECK_TYPES[choice.statCheck.stat];
+          if (!choice) return choice;
+          const effectiveStatCheck = choice.intent === "Attempt" && choice.statCheck == null
+            ? { stat: fallbackDialogueStat(choice.tag) }
+            : choice.statCheck;
+          if (!effectiveStatCheck) return choice;
+          const checkType = DIALOGUE_STAT_CHECK_TYPES[effectiveStatCheck.stat];
           const odds = checkType ? skillCheckOdds({ checkType, npcId: event.npcId }, worldState, character) : null;
           // New narrator output supplies only the relevant stat. Odds are always
           // hydrated here by the code-owned resolver. The fallback keeps older saved
           // or hand-authored offers (including Voss) compatible without changing them.
-          const chance = odds?.chance ?? Number(choice.statCheck.chance);
+          const chance = odds?.chance ?? Number(effectiveStatCheck.chance);
           return Number.isFinite(chance)
-            ? { ...choice, statCheck: { ...choice.statCheck, chance: clamp(Math.round(chance), 0, 100) } }
+            ? { ...choice, statCheck: { ...effectiveStatCheck, chance: clamp(Math.round(chance), 0, 100) } }
             : { ...choice, statCheck: null };
         }) : [];
         if (npc && visibleDialogueChoices(npc, choices).length) {
